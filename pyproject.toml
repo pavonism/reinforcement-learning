@@ -8,6 +8,7 @@ dependencies = [
     "matplotlib==3.9.2",
     "pandas==2.2.2",
     "gymnasium[atari]==1.0.0",
+    "gymnasium[other]==1.0.0",
 ]
 [build-system]
 build-backend = "flit_core.buildapi"

@@ -163,3 +163,5 @@ cython_debug/
 
 # Pylint
 .pylintrc
+
+outputs/
