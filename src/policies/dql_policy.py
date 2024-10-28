@@ -1,4 +1,6 @@
 import copy
+import json
+import os
 from gymnasium import Env
 from torch import nn
 import torch
@@ -8,11 +10,58 @@ from torchvision import transforms
 from PIL import Image
 
 
+class DQLParameters:
+    def __init__(
+        self,
+        learning_rate: float = 0.001,
+        epsilon: float = 1.0,
+        epsilon_decay: float = 0.995,
+        discount_factor: float = 0.99,
+        target_update_frequency: int = 10,
+        seed: int = 0,
+    ):
+        self.learning_rate = learning_rate
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.discount_factor = discount_factor
+        self.target_update_frequency = target_update_frequency
+        self.seed = seed
+
+    def to_dict(self):
+        return {
+            "learning_rate": self.learning_rate,
+            "epsilon": self.epsilon,
+            "epsilon_decay": self.epsilon_decay,
+            "discount_factor": self.discount_factor,
+            "target_update_frequency": self.target_update_frequency,
+            "seed": self.seed,
+        }
+
+    @staticmethod
+    def from_dict(d):
+        return DQLParameters(
+            learning_rate=d["learning_rate"],
+            epsilon=d["epsilon"],
+            epsilon_decay=d["epsilon_decay"],
+            discount_factor=d["discount_factor"],
+            target_update_frequency=d["target_update_frequency"],
+            seed=d["seed"],
+        )
+
+    def save(self, path: str):
+        json.dump(self.to_dict(), open(path, "w"))
+
+    @staticmethod
+    def load(path: str):
+        return DQLParameters.from_dict(json.load(open(path)))
+
+
 class DQLPolicy(Policy):
     def __init__(
         self,
         env: Env,
         model: nn.Module,
+        path: str,
         state_transformer: transforms.Compose = transforms.Compose(
             [
                 transforms.Resize((80, 80)),
@@ -32,6 +81,7 @@ class DQLPolicy(Policy):
         self.__n_actions = env.action_space.n
         self.__action_value = model.to(self.__device)
         self.__target_action_value = copy.deepcopy(model)
+        self.__path = path
         self.__state_transformer = state_transformer
         self.__optimizer = torch.optim.Adam(
             self.__action_value.parameters(),
@@ -44,17 +94,19 @@ class DQLPolicy(Policy):
         self.__replay_buffer = ReplayBuffer(seed=seed)
         np.random.seed(seed)
 
+        if os.path.exists(self.__path):
+            self.__load()
+
     def run(self, episodes: int = 1, max_steps: int = 1_000) -> float:
         max_reward = 0
 
-        for _ in range(episodes):
+        for episode in range(episodes):
             state, _ = self.__env.reset()
             state = Image.fromarray(state)
             total_reward = 0
             target_update_counter = 0
 
-            for step in range(max_steps):
-                print("Step: ", step)
+            for _ in range(max_steps):
                 action = self.__get_action_from_epsilon_greedy(state)
                 new_state, reward, done, _, _ = self.__env.step(action)
                 new_state = Image.fromarray(new_state)
@@ -103,10 +155,12 @@ class DQLPolicy(Policy):
                 if done:
                     break
 
+            print(f"Total reward for episode {episode}: {total_reward}")
             max_reward = max(max_reward, total_reward)
             self.__epsilon *= self.__epsilon_decay
 
         self.__env.reset()
+        self.__save()
         return max_reward
 
     def __get_action_from_epsilon_greedy(self, state):
@@ -122,3 +176,43 @@ class DQLPolicy(Policy):
         self.__action_value.eval()
         with torch.no_grad():
             return self.__action_value(transformed_state).argmax().item()
+
+    def __save(self):
+        os.makedirs(self.__path, exist_ok=True)
+
+        torch.save(self.__action_value.state_dict(), self.__path + "model.pth")
+        dql_parameters = DQLParameters(
+            learning_rate=self.__optimizer.param_groups[0]["lr"],
+            epsilon=self.__epsilon,
+            epsilon_decay=self.__epsilon_decay,
+            discount_factor=self.__discount_factor,
+            target_update_frequency=self.__target_update_frequency,
+        )
+
+        dql_parameters.save(self.__path + "policy_parameters.json")
+
+    def __load(self):
+        model_path = f"{self.__path}/model.pth"
+        if os.path.exists(model_path):
+            self.__action_value.load_state_dict(
+                torch.load(
+                    model_path,
+                    weights_only=True,
+                )
+            )
+        else:
+            np.log("WARNING: Model not found. Using random network weights.")
+
+        policy_parameters_path = f"{self.__path}/policy_parameters.json"
+
+        if os.path.exists(policy_parameters_path):
+            dql_parameters = DQLParameters.load(policy_parameters_path)
+
+            self.__optimizer.param_groups[0]["lr"] = dql_parameters.learning_rate
+            self.__epsilon = dql_parameters.epsilon
+            self.__epsilon_decay = dql_parameters.epsilon_decay
+            self.__discount_factor = dql_parameters.discount_factor
+            self.__target_update_frequency = dql_parameters.target_update_frequency
+            np.random.seed(dql_parameters.seed)
+        else:
+            np.log("WARNING: Policy parameters not found. Using default values.")
