@@ -29,6 +29,7 @@ class DQLPolicy(Policy):
         epsilon_decay: float = 0.995,
         discount_factor: float = 0.99,
         target_update_frequency: int = 10,
+        save_frequency_in_episodes: int = 100,
         seed: int = 0,
     ):
         self.__device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -37,6 +38,7 @@ class DQLPolicy(Policy):
         self.__action_value = model.to(self.__device)
         self.__target_action_value = copy.deepcopy(model)
         self.__path = path
+        self.__metrics_file = f"{path}/metrics.csv"
         self.__state_transformer = state_transformer
         self.__optimizer = torch.optim.Adam(
             self.__action_value.parameters(),
@@ -46,7 +48,9 @@ class DQLPolicy(Policy):
         self.__epsilon_decay = epsilon_decay
         self.__discount_factor = discount_factor
         self.__target_update_frequency = target_update_frequency
+        self.__save_frequency_in_episodes = save_frequency_in_episodes
         self.__replay_buffer = ReplayBuffer(seed=seed)
+        self.__total_episodes = 0
         np.random.seed(seed)
 
         if os.path.exists(self.__path):
@@ -55,14 +59,14 @@ class DQLPolicy(Policy):
     def train(self, episodes: int = 1, max_steps: int = 1_000) -> float:
         max_reward = 0
 
-        for episode in range(episodes):
+        for episode in range(self.__total_episodes, self.__total_episodes + episodes):
             state, _ = self.__env.reset()
             state = Image.fromarray(state)
             episode_total_reward = 0
             target_update_counter = 0
 
-            for _ in range(max_steps):
-                action = self.__get_action_from_epsilon_greedy(state)
+            for step in range(max_steps):
+                action, action_type = self.__get_action_from_epsilon_greedy(state)
                 new_state, reward, done, _, _ = self.__env.step(action)
                 new_state = Image.fromarray(new_state)
 
@@ -107,12 +111,18 @@ class DQLPolicy(Policy):
                         self.__action_value.state_dict()
                     )
 
+                self.__log(episode, step, action, action_type, reward, output.item())
+
                 if done:
                     break
 
             print(f"Total reward for episode {episode}: {episode_total_reward}")
             max_reward = max(max_reward, episode_total_reward)
             self.__epsilon *= self.__epsilon_decay
+            self.__total_episodes += 1
+
+            if episode % self.__save_frequency_in_episodes == 0:
+                self.__save()
 
         self.__env.reset()
         self.__save()
@@ -128,7 +138,7 @@ class DQLPolicy(Policy):
             state = Image.fromarray(state)
 
             for _ in range(max_steps):
-                action = self.__get_action_from_epsilon_greedy(state)
+                action, _ = self.__get_action_from_epsilon_greedy(state)
                 state, reward, done, _, _ = self.__env.step(action)
                 state = Image.fromarray(state)
 
@@ -145,7 +155,9 @@ class DQLPolicy(Policy):
     def __get_action_from_epsilon_greedy(self, state):
         # Exploration
         if np.random.random() < self.__epsilon:
-            return np.random.random_integers(0, self.__n_actions - 1, 1)[0]
+            return np.random.random_integers(0, self.__n_actions - 1, 1)[
+                0
+            ], "exploration"
 
         # Exploitation
         transformed_state = self.__state_transformer(state)
@@ -154,21 +166,24 @@ class DQLPolicy(Policy):
 
         self.__action_value.eval()
         with torch.no_grad():
-            return self.__action_value(transformed_state).argmax().item()
+            return self.__action_value(
+                transformed_state
+            ).argmax().item(), "exploitation"
 
     def __save(self):
         os.makedirs(self.__path, exist_ok=True)
 
-        torch.save(self.__action_value.state_dict(), self.__path + "model.pth")
+        torch.save(self.__action_value.state_dict(), f"{self.__path}/model.pth")
         dql_parameters = DQLParameters(
             learning_rate=self.__optimizer.param_groups[0]["lr"],
             epsilon=self.__epsilon,
             epsilon_decay=self.__epsilon_decay,
             discount_factor=self.__discount_factor,
             target_update_frequency=self.__target_update_frequency,
+            total_episodes=self.__total_episodes,
         )
 
-        dql_parameters.save(self.__path + "policy_parameters.json")
+        dql_parameters.save(f"{self.__path}/policy_parameters.json")
 
     def __load(self):
         model_path = f"{self.__path}/model.pth"
@@ -180,7 +195,7 @@ class DQLPolicy(Policy):
                 )
             )
         else:
-            np.log("WARNING: Model not found. Using random network weights.")
+            print("WARNING: Model not found. Using random network weights.")
 
         policy_parameters_path = f"{self.__path}/policy_parameters.json"
 
@@ -192,9 +207,19 @@ class DQLPolicy(Policy):
             self.__epsilon_decay = dql_parameters.epsilon_decay
             self.__discount_factor = dql_parameters.discount_factor
             self.__target_update_frequency = dql_parameters.target_update_frequency
+            self.__total_episodes = dql_parameters.total_episodes
             np.random.seed(dql_parameters.seed)
         else:
-            np.log("WARNING: Policy parameters not found. Using default values.")
+            print("WARNING: Policy parameters not found. Using default values.")
+
+    def __log(self, episode, step, action, action_type, reward, loss):
+        if not os.path.exists(self.__metrics_file):
+            os.makedirs(self.__path, exist_ok=True)
+            with open(self.__metrics_file, "w") as f:
+                f.write("episode,step,action,action_type,reward,loss\n")
+
+        with open(self.__metrics_file, "a") as f:
+            f.write(f"{episode},{step},{action},{action_type},{reward},{loss},\n")
 
 
 class DQLParameters:
@@ -205,6 +230,7 @@ class DQLParameters:
         epsilon_decay: float = 0.995,
         discount_factor: float = 0.99,
         target_update_frequency: int = 10,
+        total_episodes: int = 0,
         seed: int = 0,
     ):
         self.learning_rate = learning_rate
@@ -212,6 +238,7 @@ class DQLParameters:
         self.epsilon_decay = epsilon_decay
         self.discount_factor = discount_factor
         self.target_update_frequency = target_update_frequency
+        self.total_episodes = total_episodes
         self.seed = seed
 
     def to_dict(self):
@@ -221,6 +248,7 @@ class DQLParameters:
             "epsilon_decay": self.epsilon_decay,
             "discount_factor": self.discount_factor,
             "target_update_frequency": self.target_update_frequency,
+            "total_episodes": self.total_episodes,
             "seed": self.seed,
         }
 
@@ -232,6 +260,7 @@ class DQLParameters:
             epsilon_decay=d["epsilon_decay"],
             discount_factor=d["discount_factor"],
             target_update_frequency=d["target_update_frequency"],
+            total_episodes=d["total_episodes"],
             seed=d["seed"],
         )
 
