@@ -4,56 +4,11 @@ import os
 from gymnasium import Env
 from torch import nn
 import torch
+from tqdm import tqdm
 from src.policies.common import Policy, ReplayBuffer
 import numpy as np
 from torchvision import transforms
 from PIL import Image
-
-
-class DQLParameters:
-    def __init__(
-        self,
-        learning_rate: float = 0.001,
-        epsilon: float = 1.0,
-        epsilon_decay: float = 0.995,
-        discount_factor: float = 0.99,
-        target_update_frequency: int = 10,
-        seed: int = 0,
-    ):
-        self.learning_rate = learning_rate
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.discount_factor = discount_factor
-        self.target_update_frequency = target_update_frequency
-        self.seed = seed
-
-    def to_dict(self):
-        return {
-            "learning_rate": self.learning_rate,
-            "epsilon": self.epsilon,
-            "epsilon_decay": self.epsilon_decay,
-            "discount_factor": self.discount_factor,
-            "target_update_frequency": self.target_update_frequency,
-            "seed": self.seed,
-        }
-
-    @staticmethod
-    def from_dict(d):
-        return DQLParameters(
-            learning_rate=d["learning_rate"],
-            epsilon=d["epsilon"],
-            epsilon_decay=d["epsilon_decay"],
-            discount_factor=d["discount_factor"],
-            target_update_frequency=d["target_update_frequency"],
-            seed=d["seed"],
-        )
-
-    def save(self, path: str):
-        json.dump(self.to_dict(), open(path, "w"))
-
-    @staticmethod
-    def load(path: str):
-        return DQLParameters.from_dict(json.load(open(path)))
 
 
 class DQLPolicy(Policy):
@@ -97,13 +52,13 @@ class DQLPolicy(Policy):
         if os.path.exists(self.__path):
             self.__load()
 
-    def run(self, episodes: int = 1, max_steps: int = 1_000) -> float:
+    def train(self, episodes: int = 1, max_steps: int = 1_000) -> float:
         max_reward = 0
 
         for episode in range(episodes):
             state, _ = self.__env.reset()
             state = Image.fromarray(state)
-            total_reward = 0
+            episode_total_reward = 0
             target_update_counter = 0
 
             for _ in range(max_steps):
@@ -144,7 +99,7 @@ class DQLPolicy(Policy):
                 output.backward()
                 self.__optimizer.step()
 
-                total_reward += reward
+                episode_total_reward += reward
                 target_update_counter += 1
 
                 if target_update_counter % self.__target_update_frequency == 0:
@@ -155,12 +110,36 @@ class DQLPolicy(Policy):
                 if done:
                     break
 
-            print(f"Total reward for episode {episode}: {total_reward}")
-            max_reward = max(max_reward, total_reward)
+            print(f"Total reward for episode {episode}: {episode_total_reward}")
+            max_reward = max(max_reward, episode_total_reward)
             self.__epsilon *= self.__epsilon_decay
 
         self.__env.reset()
         self.__save()
+        return max_reward
+
+    def play(self, episodes: int = 1, max_steps: int = 1_000) -> float:
+        max_reward = 0
+
+        for _ in tqdm(range(episodes)):
+            episode_total_reward = 0
+
+            state, _ = self.__env.reset()
+            state = Image.fromarray(state)
+
+            for _ in range(max_steps):
+                action = self.__get_action_from_epsilon_greedy(state)
+                state, reward, done, _, _ = self.__env.step(action)
+                state = Image.fromarray(state)
+
+                episode_total_reward += reward
+
+                if done:
+                    break
+
+            max_reward = max(max_reward, episode_total_reward)
+
+        self.__env.reset()
         return max_reward
 
     def __get_action_from_epsilon_greedy(self, state):
@@ -216,3 +195,49 @@ class DQLPolicy(Policy):
             np.random.seed(dql_parameters.seed)
         else:
             np.log("WARNING: Policy parameters not found. Using default values.")
+
+
+class DQLParameters:
+    def __init__(
+        self,
+        learning_rate: float = 0.001,
+        epsilon: float = 1.0,
+        epsilon_decay: float = 0.995,
+        discount_factor: float = 0.99,
+        target_update_frequency: int = 10,
+        seed: int = 0,
+    ):
+        self.learning_rate = learning_rate
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.discount_factor = discount_factor
+        self.target_update_frequency = target_update_frequency
+        self.seed = seed
+
+    def to_dict(self):
+        return {
+            "learning_rate": self.learning_rate,
+            "epsilon": self.epsilon,
+            "epsilon_decay": self.epsilon_decay,
+            "discount_factor": self.discount_factor,
+            "target_update_frequency": self.target_update_frequency,
+            "seed": self.seed,
+        }
+
+    @staticmethod
+    def from_dict(d):
+        return DQLParameters(
+            learning_rate=d["learning_rate"],
+            epsilon=d["epsilon"],
+            epsilon_decay=d["epsilon_decay"],
+            discount_factor=d["discount_factor"],
+            target_update_frequency=d["target_update_frequency"],
+            seed=d["seed"],
+        )
+
+    def save(self, path: str):
+        json.dump(self.to_dict(), open(path, "w"))
+
+    @staticmethod
+    def load(path: str):
+        return DQLParameters.from_dict(json.load(open(path)))

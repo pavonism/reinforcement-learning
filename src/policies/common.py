@@ -7,7 +7,10 @@ from PIL import Image
 
 
 class Policy:
-    def run(self, episodes: int, max_steps: int) -> float:
+    def train(self, episodes: int, max_steps: int) -> float:
+        pass
+
+    def play(self, episodes: int, max_steps: int) -> float:
         pass
 
 

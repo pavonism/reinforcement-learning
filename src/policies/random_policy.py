@@ -14,7 +14,10 @@ class RandomPolicy(Policy):
         self.__n_actions = env.action_space.n
         random.seed(seed)
 
-    def run(self, n_episodes: int = 1, max_steps: int = 1000) -> float:
+    def train(self, n_episodes: int = 1, max_steps: int = 1_000) -> float:
+        raise NotImplementedError("Random policy does not require training")
+
+    def play(self, n_episodes: int = 1, max_steps: int = 1_000) -> float:
         self.__env.reset()
         max_reward = 0
 
