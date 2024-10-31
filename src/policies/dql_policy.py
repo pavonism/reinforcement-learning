@@ -171,6 +171,7 @@ class DQLPolicy(Policy):
             ).argmax().item(), "exploitation"
 
     def __save(self):
+        print("Saving policy checkpoint...")
         os.makedirs(self.__path, exist_ok=True)
 
         torch.save(self.__action_value.state_dict(), f"{self.__path}/model.pth")
@@ -184,6 +185,7 @@ class DQLPolicy(Policy):
         )
 
         dql_parameters.save(f"{self.__path}/policy_parameters.json")
+        self.__replay_buffer.save(self.__path)
 
     def __load(self):
         model_path = f"{self.__path}/model.pth"
@@ -211,6 +213,11 @@ class DQLPolicy(Policy):
             np.random.seed(dql_parameters.seed)
         else:
             print("WARNING: Policy parameters not found. Using default values.")
+
+        if os.path.exists(f"{self.__path}/replay_buffer"):
+            self.__replay_buffer.load(self.__path)
+        else:
+            print("WARNING: Replay buffer not found. Using an empty replay buffer")
 
     def __log(self, episode, step, action, action_type, reward, loss):
         if not os.path.exists(self.__metrics_file):
