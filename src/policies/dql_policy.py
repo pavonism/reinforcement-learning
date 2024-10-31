@@ -223,10 +223,14 @@ class DQLPolicy(Policy):
         if not os.path.exists(self.__metrics_file):
             os.makedirs(self.__path, exist_ok=True)
             with open(self.__metrics_file, "w") as f:
-                f.write("episode,step,action,action_type,reward,loss\n")
+                f.write(
+                    "episode,step,action,action_type,reward,loss,replay_buffer_size\n"
+                )
 
         with open(self.__metrics_file, "a") as f:
-            f.write(f"{episode},{step},{action},{action_type},{reward},{loss},\n")
+            f.write(
+                f"{episode},{step},{action},{action_type},{reward},{loss},{len(self.__replay_buffer)}\n"
+            )
 
 
 class DQLParameters:
