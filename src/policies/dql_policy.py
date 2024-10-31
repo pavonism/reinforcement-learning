@@ -2,6 +2,7 @@ import copy
 import json
 import os
 from gymnasium import Env
+import pandas as pd
 from torch import nn
 import torch
 from tqdm import tqdm
@@ -188,6 +189,12 @@ class DQLPolicy(Policy):
         self.__replay_buffer.save(self.__path)
 
     def __load(self):
+        self.__load_weights()
+        self.__load_policy_parameters()
+        self.__load_replay_buffer()
+        self.__cut_metrics()
+
+    def __load_weights(self):
         model_path = f"{self.__path}/model.pth"
         if os.path.exists(model_path):
             self.__action_value.load_state_dict(
@@ -199,6 +206,7 @@ class DQLPolicy(Policy):
         else:
             print("WARNING: Model not found. Using random network weights.")
 
+    def __load_policy_parameters(self):
         policy_parameters_path = f"{self.__path}/policy_parameters.json"
 
         if os.path.exists(policy_parameters_path):
@@ -214,10 +222,23 @@ class DQLPolicy(Policy):
         else:
             print("WARNING: Policy parameters not found. Using default values.")
 
+    def __load_replay_buffer(self):
         if os.path.exists(f"{self.__path}/replay_buffer"):
             self.__replay_buffer.load(self.__path)
         else:
             print("WARNING: Replay buffer not found. Using an empty replay buffer")
+
+    def __cut_metrics(self):
+        if os.path.exists(self.__metrics_file):
+            metrics_df = pd.read_csv(self.__metrics_file)
+            episodes_in_metrics = metrics_df.groupby("episode").count()
+
+            if episodes_in_metrics > self.__total_episodes:
+                print(
+                    "WARNING: Metrics file contains more episodes than the total episodes in the checkpoint files. Cutting the metrics file...."
+                )
+                metrics_df = metrics_df[metrics_df["episode"] < self.__total_episodes]
+                metrics_df.to_csv(self.__metrics_file, index=False)
 
     def __log(self, episode, step, action, action_type, reward, loss):
         if not os.path.exists(self.__metrics_file):
