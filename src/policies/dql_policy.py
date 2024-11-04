@@ -108,9 +108,7 @@ class DQLPolicy(Policy):
                 target_update_counter += 1
 
                 if target_update_counter % self.__target_update_frequency == 0:
-                    self.__target_action_value.load_state_dict(
-                        self.__action_value.state_dict()
-                    )
+                    self.__update_target_action_value_network()
 
                 self.__log(episode, step, action, action_type, reward, output.item())
 
@@ -128,6 +126,9 @@ class DQLPolicy(Policy):
         self.__env.reset()
         self.__save()
         return max_reward
+
+    def __update_target_action_value_network(self):
+        self.__target_action_value.load_state_dict(self.__action_value.state_dict())
 
     def play(self, episodes: int = 1, max_steps: int = 1_000) -> float:
         max_reward = 0
