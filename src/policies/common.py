@@ -102,5 +102,7 @@ class ReplayBuffer:
                 )
             )
 
+            self.weights.append(experience["reward"])
+
     def __len__(self):
         return len(self.buffer)
