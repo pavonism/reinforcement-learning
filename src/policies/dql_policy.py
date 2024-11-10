@@ -20,9 +20,10 @@ class DQLPolicy(Policy):
         path: str,
         state_transformer: transforms.Compose = transforms.Compose(
             [
-                transforms.Resize((80, 80)),
+                transforms.Resize((84, 84)),
                 transforms.Grayscale(num_output_channels=1),
                 transforms.ToTensor(),
+                transforms.Lambda(lambda x: x.squeeze(0)),
             ]
         ),
         learning_rate: float = 0.001,
@@ -31,6 +32,7 @@ class DQLPolicy(Policy):
         discount_factor: float = 0.99,
         target_update_frequency: int = 10,
         save_frequency_in_episodes: int = 100,
+        experience_play_batch_size=4,
         seed: int = 0,
     ):
         self.__device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -50,6 +52,7 @@ class DQLPolicy(Policy):
         self.__discount_factor = discount_factor
         self.__target_update_frequency = target_update_frequency
         self.__save_frequency_in_episodes = save_frequency_in_episodes
+        self.__experience_play_batch_size = experience_play_batch_size
         self.__replay_buffer = ReplayBuffer(seed=seed)
         self.__total_episodes = 0
         np.random.seed(seed)
@@ -62,36 +65,31 @@ class DQLPolicy(Policy):
 
         for episode in range(self.__total_episodes, self.__total_episodes + episodes):
             state, _ = self.__env.reset()
-            state = Image.fromarray(state)
+            state = self.__state_transformer(Image.fromarray(state))
             episode_total_reward = 0
             target_update_counter = 0
 
             for step in range(max_steps):
                 action, action_type = self.__get_action_from_epsilon_greedy(state)
                 new_state, reward, done, _, _ = self.__env.step(action)
-                new_state = Image.fromarray(new_state)
+                new_state = self.__state_transformer(Image.fromarray(new_state))
 
                 self.__replay_buffer.remember_experience(
                     state, action, reward, new_state, done
                 )
                 state = new_state
 
-                experiences = self.__replay_buffer.sample_experience(self.__device)
+                experiences = self.__replay_buffer.sample_experience(
+                    self.__device,
+                    state_memory_batch_size=self.__experience_play_batch_size,
+                )
 
-                transformed_experience_states = torch.stack(
-                    [self.__state_transformer(img) for img in experiences.states]
-                ).to(self.__device)
-
-                q_values = self.__action_value(transformed_experience_states).gather(
+                q_values = self.__action_value(experiences.states).gather(
                     1, experiences.actions.view(-1, 1)
                 )
 
-                transformed_experience_next_states = torch.stack(
-                    [self.__state_transformer(img) for img in experiences.next_states]
-                ).to(self.__device)
-
                 target_q_values = self.__target_action_value(
-                    transformed_experience_next_states
+                    experiences.next_states
                 ).max(1)[0]
 
                 y_i = (
@@ -99,6 +97,8 @@ class DQLPolicy(Policy):
                     + (1 - experiences.dones) * self.__discount_factor * target_q_values
                 )
 
+                self.__action_value.train()
+                self.__optimizer.zero_grad()
                 loss = nn.MSELoss(reduction="none")
                 output = loss(y_i, q_values.flatten()).mean()
                 output.backward()
@@ -162,15 +162,16 @@ class DQLPolicy(Policy):
             ], "exploration"
 
         # Exploitation
-        transformed_state = self.__state_transformer(state)
-        transformed_state = transformed_state.unsqueeze(0)
-        transformed_state = transformed_state.to(self.__device)
+        last_states = self.__replay_buffer.get_last_states(
+            self.__experience_play_batch_size - 1
+        )
+
+        states = torch.concat([last_states, state.unsqueeze(0)])
+        states = states.unsqueeze(0).to(self.__device)
 
         self.__action_value.eval()
         with torch.no_grad():
-            return self.__action_value(
-                transformed_state
-            ).argmax().item(), "exploitation"
+            return self.__action_value(states).argmax().item(), "exploitation"
 
     def __save(self):
         print("Saving policy checkpoint...")
