@@ -28,6 +28,7 @@ class TensorBatchExperience:
 class ReplayBuffer:
     def __init__(self, capacity: int = 1_000_000, seed: int = 0):
         self.buffer = deque(maxlen=capacity)
+        self.weights = []
         random.seed(seed)
 
     def remember_experience(
@@ -39,9 +40,10 @@ class ReplayBuffer:
         done: bool,
     ):
         self.buffer.append((state, action, reward, next_state, done))
+        self.weights.append(reward)
 
     def sample_experience(self, device, batch_size: int = 32) -> TensorBatchExperience:
-        experiences = random.sample(self.buffer, min(batch_size, len(self.buffer)))
+        experiences = random.choices(self.buffer, weights=self.weights, k=batch_size)
 
         # Separating each component to make batch processing easier
         states, actions, rewards, next_states, dones = zip(*experiences)
