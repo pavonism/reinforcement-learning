@@ -30,9 +30,10 @@ class DQLPolicy(Policy):
         epsilon: float = 1.0,
         epsilon_decay: float = 0.995,
         discount_factor: float = 0.99,
-        target_update_frequency: int = 10,
+        target_update_frequency: int = 3000,
         save_frequency_in_episodes: int = 100,
         experience_play_batch_size=4,
+        max_reward_value: float = 400.0,
         seed: int = 0,
     ):
         self.__device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -53,7 +54,7 @@ class DQLPolicy(Policy):
         self.__target_update_frequency = target_update_frequency
         self.__save_frequency_in_episodes = save_frequency_in_episodes
         self.__experience_play_batch_size = experience_play_batch_size
-        self.__replay_buffer = ReplayBuffer(seed=seed)
+        self.__replay_buffer = ReplayBuffer(max_reward_value, seed=seed)
         self.__total_episodes = 0
         np.random.seed(seed)
 
@@ -99,8 +100,8 @@ class DQLPolicy(Policy):
 
                 self.__action_value.train()
                 self.__optimizer.zero_grad()
-                loss = nn.MSELoss(reduction="none")
-                output = loss(y_i, q_values.flatten()).mean()
+                loss = nn.MSELoss()
+                output = loss(y_i, q_values.flatten())
                 output.backward()
                 self.__optimizer.step()
 
@@ -108,6 +109,7 @@ class DQLPolicy(Policy):
                 target_update_counter += 1
 
                 if target_update_counter % self.__target_update_frequency == 0:
+                    target_update_counter = 0
                     self.__update_target_action_value_network()
 
                 self.__log(episode, step, action, action_type, reward, output.item())
@@ -176,8 +178,8 @@ class DQLPolicy(Policy):
     def __save(self):
         print("Saving policy checkpoint...")
         os.makedirs(self.__path, exist_ok=True)
+        self.__replay_buffer.save(self.__path)
 
-        torch.save(self.__action_value.state_dict(), f"{self.__path}/model.pth")
         dql_parameters = DQLParameters(
             learning_rate=self.__optimizer.param_groups[0]["lr"],
             epsilon=self.__epsilon,
@@ -188,9 +190,10 @@ class DQLPolicy(Policy):
         )
 
         dql_parameters.save(f"{self.__path}/policy_parameters.json")
-        self.__replay_buffer.save(self.__path)
+        torch.save(self.__action_value.state_dict(), f"{self.__path}/model.pth")
 
     def __load(self):
+        print("Loading policy checkpoint...")
         self.__load_weights()
         self.__load_policy_parameters()
         self.__load_replay_buffer()
@@ -225,7 +228,7 @@ class DQLPolicy(Policy):
             print("WARNING: Policy parameters not found. Using default values.")
 
     def __load_replay_buffer(self):
-        if os.path.exists(f"{self.__path}/replay_buffer"):
+        if os.path.exists(f"{self.__path}/replay_buffer.pt"):
             self.__replay_buffer.load(self.__path)
         else:
             print("WARNING: Replay buffer not found. Using an empty replay buffer")
@@ -233,9 +236,9 @@ class DQLPolicy(Policy):
     def __cut_metrics(self):
         if os.path.exists(self.__metrics_file):
             metrics_df = pd.read_csv(self.__metrics_file)
-            episodes_in_metrics = metrics_df.groupby("episode").count()
+            episodes_in_metrics = metrics_df.groupby("episode")
 
-            if episodes_in_metrics > self.__total_episodes:
+            if len(episodes_in_metrics) > self.__total_episodes:
                 print(
                     "WARNING: Metrics file contains more episodes than the total episodes in the checkpoint files. Cutting the metrics file...."
                 )

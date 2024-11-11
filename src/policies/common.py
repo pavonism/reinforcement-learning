@@ -1,9 +1,7 @@
 from collections import deque
-import os
 import random
 
 import numpy as np
-import pandas as pd
 import torch
 from PIL import Image
 
@@ -17,7 +15,14 @@ class Policy:
 
 
 class TensorBatchExperience:
-    def __init__(self, states, actions, rewards, next_states, dones):
+    def __init__(
+        self,
+        states,
+        actions,
+        rewards,
+        next_states,
+        dones,
+    ):
         self.states = states
         self.actions = actions
         self.rewards = rewards
@@ -26,9 +31,11 @@ class TensorBatchExperience:
 
 
 class ReplayBuffer:
-    def __init__(self, capacity: int = 1_000_000, seed: int = 0):
+    def __init__(
+        self, max_reward_value: float, capacity: int = 1_000_000, seed: int = 0
+    ):
         self.buffer = deque(maxlen=capacity)
-        self.weights = []
+        self.max_reward_value = max_reward_value
         random.seed(seed)
 
     def remember_experience(
@@ -40,7 +47,6 @@ class ReplayBuffer:
         done: bool,
     ):
         self.buffer.append((state, action, reward, next_state, done))
-        self.weights.append(max(1, reward))  # Zero is not allowed
 
     def sample_experience(
         self,
@@ -50,7 +56,6 @@ class ReplayBuffer:
     ) -> TensorBatchExperience:
         experiences_indexes = random.choices(
             range(len(self.buffer)),
-            weights=self.weights,
             k=batch_size,
         )
 
@@ -65,7 +70,9 @@ class ReplayBuffer:
         return TensorBatchExperience(
             torch.stack(states).to(device),
             torch.tensor(actions, dtype=torch.long).to(device),
-            torch.tensor(rewards, dtype=torch.float32).to(device),
+            torch.tensor(rewards, dtype=torch.float32)
+            .div(self.max_reward_value)
+            .to(device),
             torch.stack(next_states).to(device),
             torch.tensor(dones, dtype=torch.float32).to(device),
         )
@@ -122,52 +129,11 @@ class ReplayBuffer:
 
         return torch.stack(next_states)
 
-    def save(self, path: str):
-        os.makedirs(f"{path}/replay_buffer", exist_ok=True)
-        os.makedirs(f"{path}/replay_buffer/states", exist_ok=True)
-        os.makedirs(f"{path}/replay_buffer/next_states", exist_ok=True)
+    def save(self, path):
+        torch.save(self.buffer, f"{path}/replay_buffer.pt")
 
-        experiences = []
-
-        for idx, experience in enumerate(self.buffer):
-            state, action, reward, next_state, done = experience
-
-            state_path = f"{path}/replay_buffer/states/{idx}.pt"
-            next_state_path = f"{path}/replay_buffer/next_states/{idx}.pt"
-
-            torch.save(state, state_path)
-            torch.save(next_state, next_state_path)
-
-            experiences.append(
-                {
-                    "state": state_path,
-                    "action": action,
-                    "reward": reward,
-                    "next_state": next_state_path,
-                    "done": done,
-                }
-            )
-
-        pd.DataFrame(experiences).to_csv(f"{path}/replay_buffer/experiences.csv")
-
-    def load(self, path: str):
-        experiences = pd.read_csv(f"{path}/replay_buffer/experiences.csv")
-
-        for _, experience in experiences.iterrows():
-            state = torch.load(experience["state"])
-            next_state = torch.load(experience["next_state"])
-
-            self.buffer.append(
-                (
-                    state,
-                    experience["action"],
-                    experience["reward"],
-                    next_state,
-                    experience["done"],
-                )
-            )
-
-            self.weights.append(experience["reward"])
+    def load(self, path):
+        self.buffer = torch.load(f"{path}/replay_buffer.pt", weights_only=False)
 
     def __len__(self):
         return len(self.buffer)
