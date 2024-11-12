@@ -28,6 +28,7 @@ class DQLPolicy(Policy):
         ),
         learning_rate: float = 0.001,
         epsilon: float = 1.0,
+        min_epsilon: float = 0.1,
         epsilon_decay: float = 0.995,
         discount_factor: float = 0.99,
         target_update_frequency: int = 3000,
@@ -49,12 +50,17 @@ class DQLPolicy(Policy):
             lr=learning_rate,
         )
         self.__epsilon = epsilon
+        self.__min_epsilon = min_epsilon
         self.__epsilon_decay = epsilon_decay
         self.__discount_factor = discount_factor
         self.__target_update_frequency = target_update_frequency
         self.__save_frequency_in_episodes = save_frequency_in_episodes
         self.__experience_play_batch_size = experience_play_batch_size
-        self.__replay_buffer = ReplayBuffer(max_reward_value, seed=seed)
+        self.__replay_buffer = ReplayBuffer(
+            max_reward_value,
+            seed=seed,
+            capacity=500_000,
+        )
         self.__total_episodes = 0
         np.random.seed(seed)
 
@@ -119,7 +125,9 @@ class DQLPolicy(Policy):
 
             print(f"Total reward for episode {episode}: {episode_total_reward}")
             max_reward = max(max_reward, episode_total_reward)
-            self.__epsilon *= self.__epsilon_decay
+
+            if self.__epsilon > self.__min_epsilon:
+                self.__epsilon *= self.__epsilon_decay
             self.__total_episodes += 1
 
             if episode % self.__save_frequency_in_episodes == 0:
