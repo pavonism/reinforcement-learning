@@ -11,6 +11,8 @@ import numpy as np
 from torchvision import transforms
 from PIL import Image
 
+from line_profiler import profile
+
 
 class DQLPolicy(Policy):
     def __init__(
@@ -29,9 +31,9 @@ class DQLPolicy(Policy):
         learning_rate: float = 0.001,
         epsilon: float = 1.0,
         min_epsilon: float = 0.1,
-        epsilon_decay: float = 0.995,
+        epsilon_decay: float = 0.999,
         discount_factor: float = 0.99,
-        target_update_frequency: int = 3000,
+        target_update_frequency: int = 10_000,
         save_frequency_in_episodes: int = 100,
         experience_play_batch_size=4,
         max_reward_value: float = 400.0,
@@ -67,6 +69,7 @@ class DQLPolicy(Policy):
         if os.path.exists(self.__path):
             self.__load()
 
+    @profile
     def train(self, episodes: int = 1, max_steps: int = 1_000) -> float:
         max_reward = 0
 
@@ -103,6 +106,9 @@ class DQLPolicy(Policy):
                     experiences.rewards
                     + (1 - experiences.dones) * self.__discount_factor * target_q_values
                 )
+
+                td_error = (y_i - q_values.flatten()).abs().detach().type(torch.double)
+                self.__replay_buffer.update_priorities(experiences.indexes, td_error)
 
                 self.__action_value.train()
                 self.__optimizer.zero_grad()

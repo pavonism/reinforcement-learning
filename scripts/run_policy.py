@@ -18,6 +18,6 @@ print(f"Observation shape: {obs_shape}")
 print(f"Number of actions: {n_actions}")
 
 policy = DQLPolicy(
-    env, model=DQN(n_actions), path="../checkpoints/dqn/decreased_replay_buffer"
+    env, model=DQN(n_actions), path="../checkpoints/dqn/priority_replay_buffer"
 )
 total_reward = policy.train(episodes=10_000, max_steps=10_000)
