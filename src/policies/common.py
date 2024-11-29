@@ -36,16 +36,17 @@ class TensorBatchExperience:
 class ReplayBuffer:
     def __init__(
         self,
-        max_reward_value: float,
         capacity: int = 1_000_000,
         seed: int = 0,
+        with_priorities: bool = True,
         min_priority: float = 0.01,
     ):
         self.buffer = []
         self.priorities = torch.tensor(np.zeros(capacity)).cuda()
-        self.__curent_index = 0
-        self.__max_reward_value = max_reward_value
+        self.position = 0
+        self.with_priorities = with_priorities
         self.__min_priority = min_priority
+        self.reward_normalizer = RewardNormalizer()
         random.seed(seed)
 
     def remember_experience(
@@ -61,10 +62,10 @@ class ReplayBuffer:
         if len(self.buffer) < len(self.priorities):
             self.buffer.append(experience)
         else:
-            self.buffer[self.__curent_index] = experience
+            self.buffer[self.position] = experience
 
-        self.priorities[self.__curent_index] = self.__min_priority
-        self.__curent_index = (self.__curent_index + 1) % len(self.priorities)
+        self.priorities[self.position] = self.__min_priority
+        self.position = (self.position + 1) % len(self.priorities)
 
     @profile
     def sample_experience(
@@ -73,7 +74,11 @@ class ReplayBuffer:
         state_memory_batch_size: int,
         batch_size: int = 32,
     ) -> TensorBatchExperience:
-        experience_indexes = torch.multinomial(self.priorities, batch_size).cpu()
+        experience_indexes = torch.multinomial(
+            self.priorities,
+            batch_size,
+            replacement=len(self.buffer) < batch_size,
+        ).cpu()
 
         experiences = self.__gather_experiences(
             experience_indexes,
@@ -87,9 +92,10 @@ class ReplayBuffer:
             experience_indexes,
             torch.stack(states).to(device),
             torch.tensor(actions, dtype=torch.long).to(device),
-            torch.tensor(rewards, dtype=torch.float32)
-            .div(self.__max_reward_value)
-            .to(device),
+            torch.tensor(
+                self.reward_normalizer.normalize(rewards),
+                dtype=torch.float32,
+            ).to(device),
             torch.stack(next_states).to(device),
             torch.tensor(dones, dtype=torch.float32).to(device),
         )
@@ -147,17 +153,47 @@ class ReplayBuffer:
         return torch.stack(next_states)
 
     def update_priorities(self, indexes, priorities):
-        self.priorities[indexes] = priorities
+        if self.with_priorities:
+            self.priorities[indexes] = priorities
 
     def save(self, path):
         torch.save(self.buffer, f"{path}/replay_buffer.pt")
         torch.save(self.priorities, f"{path}/replay_buffer_priorities.pt")
+        torch.save(self.reward_normalizer, f"{path}/reward_normalizer.pt")
 
     def load(self, path):
         self.buffer = torch.load(f"{path}/replay_buffer.pt", weights_only=False)
         self.priorities = torch.load(
             f"{path}/replay_buffer_priorities.pt", weights_only=False
         ).cuda()
+        self.reward_normalizer = torch.load(
+            f"{path}/reward_normalizer.pt", weights_only=False
+        )
 
     def __len__(self):
         return len(self.buffer)
+
+
+class RewardNormalizer:
+    def __init__(self, epsilon=1e-4):
+        self.mean = 0
+        self.var = 1
+        self.count = 0
+        self.epsilon = epsilon
+
+    def normalize(self, rewards):
+        rewards = np.array(rewards)
+
+        new_count = self.count + len(rewards)
+        new_mean = (self.count * self.mean + np.sum(rewards)) / new_count
+        new_var = (
+            self.count * self.var + np.sum((rewards - new_mean) ** 2)
+        ) / new_count
+
+        self.mean = new_mean
+        self.var = new_var
+        self.count = new_count
+
+        std = np.maximum(self.epsilon, np.sqrt(self.var))
+
+        return (rewards - self.mean) / std

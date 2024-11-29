@@ -28,15 +28,18 @@ class DQLPolicy(Policy):
                 transforms.Lambda(lambda x: x.squeeze(0)),
             ]
         ),
-        learning_rate: float = 0.001,
+        learning_rate: float = 0.0001,
         epsilon: float = 1.0,
         min_epsilon: float = 0.1,
         epsilon_decay: float = 0.999,
         discount_factor: float = 0.99,
         target_update_frequency: int = 10_000,
         save_frequency_in_episodes: int = 100,
-        experience_play_batch_size=4,
-        max_reward_value: float = 400.0,
+        batch_size: int = 128,
+        experience_play_batch_size=8,
+        priority_replay_buffer: bool = False,
+        replay_buffer_capacity: int = 800_000,
+        ddqn: bool = False,
         seed: int = 0,
     ):
         self.__device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -57,13 +60,15 @@ class DQLPolicy(Policy):
         self.__discount_factor = discount_factor
         self.__target_update_frequency = target_update_frequency
         self.__save_frequency_in_episodes = save_frequency_in_episodes
+        self.__batch_size = batch_size
         self.__experience_play_batch_size = experience_play_batch_size
         self.__replay_buffer = ReplayBuffer(
-            max_reward_value,
             seed=seed,
-            capacity=500_000,
+            capacity=replay_buffer_capacity,
+            with_priorities=priority_replay_buffer,
         )
         self.__total_episodes = 0
+        self.__ddqn = ddqn
         np.random.seed(seed)
 
         if os.path.exists(self.__path):
@@ -74,14 +79,16 @@ class DQLPolicy(Policy):
         max_reward = 0
 
         for episode in range(self.__total_episodes, self.__total_episodes + episodes):
-            state, _ = self.__env.reset()
+            state, *_ = self.__env.reset()
             state = self.__state_transformer(Image.fromarray(state))
             episode_total_reward = 0
             target_update_counter = 0
 
             for step in range(max_steps):
-                action, action_type = self.__get_action_from_epsilon_greedy(state)
-                new_state, reward, done, _, _ = self.__env.step(action)
+                action, action_type, epsilon_greedy_q_values = (
+                    self.__get_action_from_epsilon_greedy(state)
+                )
+                new_state, reward, done, *_ = self.__env.step(action)
                 new_state = self.__state_transformer(Image.fromarray(new_state))
 
                 self.__replay_buffer.remember_experience(
@@ -92,28 +99,42 @@ class DQLPolicy(Policy):
                 experiences = self.__replay_buffer.sample_experience(
                     self.__device,
                     state_memory_batch_size=self.__experience_play_batch_size,
+                    batch_size=self.__batch_size,
                 )
 
-                q_values = self.__action_value(experiences.states).gather(
-                    1, experiences.actions.view(-1, 1)
+                q_values = (
+                    self.__action_value(experiences.states)
+                    .gather(1, experiences.actions.view(-1, 1))
+                    .flatten()
                 )
 
-                target_q_values = self.__target_action_value(
-                    experiences.next_states
-                ).max(1)[0]
+                if self.__ddqn:
+                    next_action_indexes = self.__action_value(
+                        experiences.next_states,
+                    ).argmax(1)
+
+                    target_q_values = (
+                        self.__target_action_value(experiences.next_states)
+                        .gather(1, next_action_indexes.view(-1, 1))
+                        .flatten()
+                    )
+                else:
+                    target_q_values = self.__target_action_value(
+                        experiences.next_states,
+                    ).max(1)[0]
 
                 y_i = (
                     experiences.rewards
                     + (1 - experiences.dones) * self.__discount_factor * target_q_values
                 )
 
-                td_error = (y_i - q_values.flatten()).abs().detach().type(torch.double)
+                td_error = (y_i - q_values).abs().detach().type(torch.double)
                 self.__replay_buffer.update_priorities(experiences.indexes, td_error)
 
                 self.__action_value.train()
                 self.__optimizer.zero_grad()
                 loss = nn.MSELoss()
-                output = loss(y_i, q_values.flatten())
+                output = loss(y_i, q_values)
                 output.backward()
                 self.__optimizer.step()
 
@@ -124,7 +145,15 @@ class DQLPolicy(Policy):
                     target_update_counter = 0
                     self.__update_target_action_value_network()
 
-                self.__log(episode, step, action, action_type, reward, output.item())
+                self.__log(
+                    episode,
+                    step,
+                    action,
+                    action_type,
+                    reward,
+                    output.item(),
+                    epsilon_greedy_q_values,
+                )
 
                 if done:
                     break
@@ -173,9 +202,11 @@ class DQLPolicy(Policy):
     def __get_action_from_epsilon_greedy(self, state):
         # Exploration
         if np.random.random() < self.__epsilon:
-            return np.random.random_integers(0, self.__n_actions - 1, 1)[
-                0
-            ], "exploration"
+            return (
+                np.random.random_integers(0, self.__n_actions - 1, 1)[0],
+                "exploration",
+                [q_value / self.__n_actions for q_value in [1] * self.__n_actions],
+            )
 
         # Exploitation
         last_states = self.__replay_buffer.get_last_states(
@@ -187,7 +218,8 @@ class DQLPolicy(Policy):
 
         self.__action_value.eval()
         with torch.no_grad():
-            return self.__action_value(states).argmax().item(), "exploitation"
+            q_values = self.__action_value(states).squeeze(0)
+            return q_values.argmax().item(), "exploitation", q_values.tolist()
 
     def __save(self):
         print("Saving policy checkpoint...")
@@ -201,6 +233,8 @@ class DQLPolicy(Policy):
             discount_factor=self.__discount_factor,
             target_update_frequency=self.__target_update_frequency,
             total_episodes=self.__total_episodes,
+            batch_size=self.__batch_size,
+            ddqn=self.__ddqn,
         )
 
         dql_parameters.save(f"{self.__path}/policy_parameters.json")
@@ -212,6 +246,15 @@ class DQLPolicy(Policy):
         self.__load_policy_parameters()
         self.__load_replay_buffer()
         self.__cut_metrics()
+        self.__set_replay_buffer_position()
+
+    def __set_replay_buffer_position(self):
+        if os.path.exists(self.__metrics_file):
+            metrics_df = pd.read_csv(self.__metrics_file)
+            self.__replay_buffer.position = len(metrics_df) % len(
+                self.__replay_buffer.priorities
+            )
+            print(f"Replay buffer position set to {self.__replay_buffer.position}")
 
     def __load_weights(self):
         model_path = f"{self.__path}/model.pth"
@@ -237,6 +280,9 @@ class DQLPolicy(Policy):
             self.__discount_factor = dql_parameters.discount_factor
             self.__target_update_frequency = dql_parameters.target_update_frequency
             self.__total_episodes = dql_parameters.total_episodes
+            self.__replay_buffer.with_priorities = dql_parameters.priority_replay_buffer
+            self.__batch_size = dql_parameters.batch_size
+            self.__ddqn = dql_parameters.ddqn
             np.random.seed(dql_parameters.seed)
         else:
             print("WARNING: Policy parameters not found. Using default values.")
@@ -259,17 +305,25 @@ class DQLPolicy(Policy):
                 metrics_df = metrics_df[metrics_df["episode"] < self.__total_episodes]
                 metrics_df.to_csv(self.__metrics_file, index=False)
 
-    def __log(self, episode, step, action, action_type, reward, loss):
+    def __log(self, episode, step, action, action_type, reward, loss, q_values):
         if not os.path.exists(self.__metrics_file):
             os.makedirs(self.__path, exist_ok=True)
             with open(self.__metrics_file, "w") as f:
-                f.write(
-                    "episode,step,action,action_type,reward,loss,replay_buffer_size\n"
-                )
+                headers = [
+                    "episode",
+                    "step",
+                    "action",
+                    "action_type",
+                    "reward",
+                    "loss",
+                    "replay_buffer_size",
+                ] + [f"q_value_{i}" for i in range(self.__n_actions)]
+                f.write(",".join(headers) + "\n")
 
         with open(self.__metrics_file, "a") as f:
+            q_values = ",".join(map(str, q_values))
             f.write(
-                f"{episode},{step},{action},{action_type},{reward},{loss},{len(self.__replay_buffer)}\n"
+                f"{episode},{step},{action},{action_type},{reward},{loss},{len(self.__replay_buffer)},{q_values}\n"
             )
 
 
@@ -282,6 +336,9 @@ class DQLParameters:
         discount_factor: float = 0.99,
         target_update_frequency: int = 10,
         total_episodes: int = 0,
+        batch_size: int = 128,
+        priority_replay_buffer: bool = False,
+        ddqn: bool = False,
         seed: int = 0,
     ):
         self.learning_rate = learning_rate
@@ -290,6 +347,9 @@ class DQLParameters:
         self.discount_factor = discount_factor
         self.target_update_frequency = target_update_frequency
         self.total_episodes = total_episodes
+        self.batch_size = batch_size
+        self.priority_replay_buffer = priority_replay_buffer
+        self.ddqn = ddqn
         self.seed = seed
 
     def to_dict(self):
@@ -300,6 +360,9 @@ class DQLParameters:
             "discount_factor": self.discount_factor,
             "target_update_frequency": self.target_update_frequency,
             "total_episodes": self.total_episodes,
+            "batch_size": self.batch_size,
+            "priority_replay_buffer": self.priority_replay_buffer,
+            "ddqn": self.ddqn,
             "seed": self.seed,
         }
 
@@ -312,6 +375,9 @@ class DQLParameters:
             discount_factor=d["discount_factor"],
             target_update_frequency=d["target_update_frequency"],
             total_episodes=d["total_episodes"],
+            batch_size=d["batch_size"],
+            priority_replay_buffer=d.get("priority_replay_buffer", False),
+            ddqn=d.get("ddqn", False),
             seed=d["seed"],
         )
 
