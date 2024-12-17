@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 
 import gymnasium
 import ale_py
@@ -6,7 +7,7 @@ import ale_py
 from muzero.context import MuZeroContext
 from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
-from muzero.threads import Actor, ExperienceCollector, SharedContext
+from muzero.threads import Actor, GamesCollector, SharedContext
 
 CHECKPOINT_PATH = "checkpoints/muzero"
 games_queue = multiprocessing.Queue()
@@ -40,14 +41,19 @@ context = MuZeroContext(
     lr_init=0.05,
     lr_decay_steps=350e3,
     env_factory=env_factory,
+    checkpoint_path=CHECKPOINT_PATH,
 )
 
-network = MuZeroNetwork(
-    raw_state_channels=3,
-    hidden_state_channels=128,
-    num_actions=context.n_actions,
-    value_support_size=601,
-    reward_support_size=601,
+network = (
+    MuZeroNetwork.from_checkpoint(CHECKPOINT_PATH)
+    if os.path.exists(CHECKPOINT_PATH)
+    else MuZeroNetwork(
+        raw_state_channels=3,
+        hidden_state_channels=128,
+        num_actions=context.n_actions,
+        value_support_size=601,
+        reward_support_size=601,
+    )
 )
 
 shared_context = SharedContext(
@@ -56,7 +62,7 @@ shared_context = SharedContext(
     stop_event=stop_event,
 )
 
-experience_collector = ExperienceCollector(
+experience_collector = GamesCollector(
     queue=games_queue,
     replay_buffer=replay_buffer,
     save_frequency=50,

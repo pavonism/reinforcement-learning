@@ -39,6 +39,7 @@ class MuZeroContext(object):
         lr_init: float,
         lr_decay_steps: float,
         env_factory: Callable[[int], Env],
+        checkpoint_path: str,
         known_bounds: Optional[KnownBounds] = None,
     ):
         ### Self-Play
@@ -79,6 +80,7 @@ class MuZeroContext(object):
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = lr_decay_steps
 
+        self.checkpoint_path = checkpoint_path
         self._env_factory = env_factory
         self._envs = [env_factory(i) for i in range(num_actors)]
 

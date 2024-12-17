@@ -6,6 +6,7 @@ import threading
 
 import numpy as np
 import torch
+from torch import Tensor
 from tqdm import tqdm
 
 from muzero.context import MuZeroContext
@@ -45,7 +46,7 @@ class SharedContext:
         self._stop_event.is_set()
 
 
-class ExperienceCollector(threading.Thread):
+class GamesCollector(threading.Thread):
     def __init__(
         self,
         queue: multiprocessing.Queue,
@@ -113,7 +114,8 @@ class Actor(threading.Thread):
     def play_game(self, context: MuZeroContext, network: MuZeroNetwork):
         game = context.new_game(self._actor_id)
 
-        with tqdm(total=context.max_moves, position=self._actor_id) as tqdm_bar:
+        # First position is reserved for the trainer.
+        with tqdm(total=context.max_moves, position=self._actor_id + 1) as tqdm_bar:
             while not game.terminal() and len(game.actions) < context.max_moves:
                 root = Node(0)
                 state = game.get_state(-1)
@@ -172,3 +174,95 @@ class Actor(threading.Thread):
             action = np.random.choice(actions, p=visit_count_distribution)
 
         return action
+
+
+class Trainer(threading.Thread):
+    def __init__(
+        self,
+        context: MuZeroContext,
+        shared_context: SharedContext,
+        replay_buffer: ReplayBuffer,
+    ):
+        super().__init__(
+            target=self._run,
+            args=(context, shared_context, replay_buffer),
+        )
+
+    def _run(
+        self,
+        context: MuZeroContext,
+        shared_context: SharedContext,
+        replay_buffer: ReplayBuffer,
+    ):
+        logging.info("Started trainer thread.")
+
+        network = shared_context.get_latest_network().clone()
+        total_training_steps = network.get_total_training_steps()
+        learning_rate = context.lr_init * context.lr_decay_rate ** (
+            total_training_steps / context.lr_decay_steps
+        )
+        optimizer = torch.optim.SGD(lr=learning_rate, momentum=context.momentum)
+
+        with tqdm(total=context.training_steps, position=0, desc="Trainer") as p_bar:
+            for i in range(total_training_steps, context.training_steps):
+                network = shared_context.get_latest_network().clone()
+                if i % context.checkpoint_interval == 0:
+                    self._save_network(network)
+
+                batch = replay_buffer.sample(context.num_unroll_steps, context.td_steps)
+                self.train_network(context, optimizer, network, batch)
+
+                shared_context.set_network(network)
+                p_bar.update(1)
+
+            self._save_network(network)
+
+    def train_network(
+        self,
+        context: MuZeroContext,
+        optimizer: torch.optim.Optimizer,
+        network: MuZeroNetwork,
+        batch,
+    ):
+        loss = 0
+        for image, actions, targets in batch:
+            value, reward, policy_logits, hidden_state = network.initial_inference(
+                image
+            )
+            predictions = [(1.0, value, reward, policy_logits)]
+
+            # Recurrent steps, from action and previous hidden state.
+            for action in actions:
+                value, reward, policy_logits, hidden_state = (
+                    network.recurrent_inference(hidden_state, action)
+                )
+                predictions.append((1.0 / len(actions), value, reward, policy_logits))
+
+                hidden_state = self._scale_gradient(hidden_state, 0.5)
+
+            for prediction, target in zip(predictions, targets):
+                gradient_scale, value, reward, policy_logits = prediction
+                target_value, target_reward, target_policy = target
+
+                l = (
+                    scalar_loss(value, target_value)
+                    + scalar_loss(reward, target_reward)
+                    + tf.nn.softmax_cross_entropy_with_logits(
+                        logits=policy_logits, labels=target_policy
+                    )
+                )
+
+                loss += self._scale_gradient(l, gradient_scale)
+
+        for weights in network.get_weights():
+            loss += context.weight_decay * 0.5 * torch.sum(weights**2)
+
+        optimizer.minimize(loss)
+
+    def _scale_gradient(self, tensor: Tensor, scale: float):
+        """Scales the gradient for the backward pass."""
+        return tensor * scale + tensor.detach() * (1 - scale)
+
+    def _save_network(self, context: MuZeroContext, network: MuZeroNetwork):
+        network.save_checkpoint(context.checkpoint_path)
+        logging.info("Network saved.")

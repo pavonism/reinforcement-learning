@@ -316,7 +316,7 @@ class PredictionNetwork(nn.Module):
         return policy_logits, value_logits
 
 
-class MuZeroNetwork(nn.Module):
+class MuZeroNetwork:
     """
     The MuZero network.
 
@@ -577,3 +577,31 @@ class MuZeroNetwork(nn.Module):
 
     def get_total_training_steps(self):
         return 0
+
+    def clone(self):
+        cloned_network = MuZeroNetwork(
+            raw_state_channels=3,
+            hidden_state_channels=256,
+            num_actions=4,
+            value_support_size=10,
+            reward_support_size=10,
+        )
+
+        cloned_network.representation_network.load_state_dict(
+            self.representation_network.state_dict()
+        )
+        cloned_network.dynamics_network.load_state_dict(
+            self.dynamics_network.state_dict()
+        )
+        cloned_network.prediction_network.load_state_dict(
+            self.prediction_network.state_dict()
+        )
+
+        return cloned_network
+
+    def save_checkpoint(self, path):
+        torch.save(self, f"{path}/muzero_network.pt")
+
+    @staticmethod
+    def from_checkpoint(path):
+        return torch.load(f"{path}/muzero_network.pt")

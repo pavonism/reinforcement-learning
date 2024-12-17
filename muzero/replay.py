@@ -64,7 +64,7 @@ class ReplayBuffer:
         return [
             (
                 g.get_state(state_index),
-                g.get_action_history[state_index : state_index + steps],
+                g.get_action_history()[state_index : state_index + steps],
                 g.get_targets(state_index, steps, td_steps),
             )
             for (g, state_index) in game_pos
