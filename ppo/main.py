@@ -47,6 +47,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
     
     while time_step < max_timesteps:
         for _ in range(update_timestep):
+            
             action = ppo_agent.select_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
             
