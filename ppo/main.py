@@ -42,6 +42,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
     
     print("Starting training...")
     state, _ = env.reset()
+    state = torch.tensor(state, dtype=torch.float32).to(device)
     episode_reward = 0
     
     while time_step < max_timesteps:

@@ -19,6 +19,7 @@ class ActorCritic(nn.Module):
         self.value_head = nn.Linear(512, 1)
 
     def forward(self, x):
+        x = x.to(next(self.shared_layers.parameters()).device) 
         if x.dim() == 5:  # Check for 5D input
             x = x.squeeze(1)
         x = self.shared_layers(x)

@@ -24,7 +24,8 @@ class PPO:
         for _ in range(self.num_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(states, actions)
             ratios = torch.exp(logprobs - old_logprobs.detach())
-            rewards = rewards.view(-1, 1)  # Ensure rewards have the correct shape
+            rewards = rewards.view(-1, 1).to(self.device)
+            state_values = state_values.to(self.device)
             advantages = rewards - state_values.detach()
             
             # Compute losses
@@ -45,26 +46,22 @@ class PPO:
         self.buffer.clear()
 
     def select_action(self, state):
-        # Unpack observation if state is a tuple (observation, info)
         if isinstance(state, tuple):
-            state = state[0]  # Extract the observation
+            state = state[0]  # Extract observation if state is a tuple
 
-        # Ensure state is a NumPy array
-        state = np.array(state)  
+        state = np.array(state)
 
         # Convert channel-last (H, W, C) to channel-first (C, H, W) if necessary
         if len(state.shape) == 3 and state.shape[-1] == 3:
             state = np.transpose(state, (2, 0, 1))
 
-        # Convert to PyTorch tensor
-        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)  # Move to correct device
 
-        # Get action and log probability
         action, logprob, entropy = self.policy.act(state)
 
-        # Store in buffer
-        self.buffer.states.append(state.cpu().numpy())
+        self.buffer.states.append(state.cpu().numpy())  # Store as CPU tensor for compatibility
         self.buffer.actions.append(action.item())
         self.buffer.logprobs.append(logprob.item())
 
         return action.item()
+
