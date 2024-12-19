@@ -4,31 +4,42 @@ import numpy as np
 from collections import deque
 
 class AtariWrapper(gymnasium.ObservationWrapper):
-    def __init__(self, env, frame_stack=4):
+    def __init__(self, env, frame_stack=4, screen_size=84):
         super(AtariWrapper, self).__init__(env)
-        self.env = env
         self.frame_stack = frame_stack
-        self.frames = deque(maxlen=frame_stack)  # Frame stack buffer
-        self.observation_space = gymnasium.spaces.Box(low=0, high=1.0, shape=(frame_stack, 84, 84), dtype=np.float32)
+        self.screen_size = screen_size
+        self.frames = deque([], maxlen=frame_stack)
+        
+        # Update observation space to match frame stacking
+        self.observation_space = gymnasium.spaces.Box(
+            low=0, 
+            high=1.0,
+            shape=(frame_stack, screen_size, screen_size),
+            dtype=np.float32
+        )
 
-    def reset(self):
-        # Reset the environment and get the initial observation
-        observation, _ = self.env.reset()  # Unpack observation and info if tuple
+    def reset(self, **kwargs):
+        observation, info = self.env.reset(**kwargs)
         processed_frame = self.preprocess_frame(observation)
+        
+        # Clear and initialize the frame stack
+        self.frames.clear()
         for _ in range(self.frame_stack):
             self.frames.append(processed_frame)
-        return np.stack(self.frames, axis=0)
-
+            
+        stacked_frames = np.stack(self.frames, axis=0)
+        return stacked_frames, info
 
     def step(self, action):
-        observation, reward, done, _, info = self.env.step(action)
+        observation, reward, terminated, truncated, info = self.env.step(action)
         processed_frame = self.preprocess_frame(observation)
         self.frames.append(processed_frame)
-        return np.stack(self.frames, axis=0), reward, done, info
+        
+        stacked_frames = np.stack(self.frames, axis=0)
+        return stacked_frames, reward, terminated, truncated, info
 
     def preprocess_frame(self, frame):
-        # Convert to grayscale, resize to 84x84, and normalize
+        # Convert to grayscale and resize
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        frame = cv2.resize(frame, (84, 84))
-        frame = frame / 255.0  # Normalize to [0, 1]
-        return frame
+        frame = cv2.resize(frame, (self.screen_size, self.screen_size))
+        return frame.astype(np.float32) / 255.0

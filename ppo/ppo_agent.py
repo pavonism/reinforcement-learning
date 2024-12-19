@@ -24,24 +24,47 @@ class PPO:
         for _ in range(self.num_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(states, actions)
             ratios = torch.exp(logprobs - old_logprobs.detach())
+            rewards = rewards.view(-1, 1)  # Ensure rewards have the correct shape
             advantages = rewards - state_values.detach()
+            
+            # Compute losses
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
 
-            loss = -torch.min(surr1, surr2) + \
-                   self.value_coeff * (rewards - state_values).pow(2) - \
-                   self.entropy_coeff * dist_entropy
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = self.value_coeff * (rewards - state_values).pow(2).mean()
+            entropy_loss = -self.entropy_coeff * dist_entropy.mean()
+
+            # Final loss
+            loss = policy_loss + value_loss + entropy_loss
 
             self.optimizer.zero_grad()
-            loss.mean().backward()
+            loss.backward()
             self.optimizer.step()
 
         self.buffer.clear()
 
     def select_action(self, state):
+        # Unpack observation if state is a tuple (observation, info)
+        if isinstance(state, tuple):
+            state = state[0]  # Extract the observation
+
+        # Ensure state is a NumPy array
+        state = np.array(state)  
+
+        # Convert channel-last (H, W, C) to channel-first (C, H, W) if necessary
+        if len(state.shape) == 3 and state.shape[-1] == 3:
+            state = np.transpose(state, (2, 0, 1))
+
+        # Convert to PyTorch tensor
         state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+
+        # Get action and log probability
         action, logprob, entropy = self.policy.act(state)
+
+        # Store in buffer
         self.buffer.states.append(state.cpu().numpy())
         self.buffer.actions.append(action.item())
         self.buffer.logprobs.append(logprob.item())
+
         return action.item()
