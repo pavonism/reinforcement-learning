@@ -68,6 +68,8 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Timesteps: {time_step}")
                 
                 state, _ = env.reset()
+                if isinstance(state, torch.Tensor):
+                    state = state.cpu().numpy()
                 episode_reward = 0
         
         print(f"\nUpdating PPO at timestep {time_step}...")

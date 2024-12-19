@@ -49,7 +49,9 @@ class PPO:
         if isinstance(state, tuple):
             state = state[0]  # Extract observation if state is a tuple
 
-        state = np.array(state.cpu())
+        if isinstance(state, torch.Tensor):
+            state = state.cpu().numpy()
+        state = np.array(state)
 
         # Convert channel-last (H, W, C) to channel-first (C, H, W) if necessary
         if len(state.shape) == 3 and state.shape[-1] == 3:
