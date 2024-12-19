@@ -7,6 +7,9 @@ from ppo.buffer import RolloutBuffer
 from ppo.ppo_agent import PPO
 from ppo.atari_wrapper import AtariWrapper
 from datetime import datetime
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Create directories
 LOG_PATH = "checkpoints/ppo"
