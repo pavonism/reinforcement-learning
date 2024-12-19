@@ -24,7 +24,7 @@ class PPO:
         for _ in range(self.num_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(states, actions)
             ratios = torch.exp(logprobs - old_logprobs.detach())
-            rewards = rewards.view(-1, 1).to(self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).view(-1, 1).to(self.device)
             state_values = state_values.to(self.device)
             advantages = rewards - state_values.detach()
             
@@ -36,7 +36,6 @@ class PPO:
             value_loss = self.value_coeff * (rewards - state_values).pow(2).mean()
             entropy_loss = -self.entropy_coeff * dist_entropy.mean()
 
-            # Final loss
             loss = policy_loss + value_loss + entropy_loss
 
             self.optimizer.zero_grad()
@@ -46,24 +45,30 @@ class PPO:
         self.buffer.clear()
 
     def select_action(self, state):
-        if isinstance(state, tuple):
-            state = state[0]  # Extract observation if state is a tuple
+        with torch.no_grad():
+            if isinstance(state, tuple):
+                state = state[0]  # Extract observation if state is a tuple
 
-        if isinstance(state, torch.Tensor):
-            state = state.cpu().numpy()
-        state = np.array(state)
+            # Handle different input types
+            if isinstance(state, torch.Tensor):
+                if state.device != self.device:
+                    state = state.to(self.device)
+            else:
+                state = np.array(state)
+                # Convert channel-last to channel-first if necessary
+                if len(state.shape) == 3 and state.shape[-1] == 3:
+                    state = np.transpose(state, (2, 0, 1))
+                state = torch.tensor(state, dtype=torch.float32).to(self.device)
 
-        # Convert channel-last (H, W, C) to channel-first (C, H, W) if necessary
-        if len(state.shape) == 3 and state.shape[-1] == 3:
-            state = np.transpose(state, (2, 0, 1))
+            # Add batch dimension if needed
+            if len(state.shape) == 3:
+                state = state.unsqueeze(0)
 
-        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)  # Move to correct device
+            action, logprob, entropy = self.policy.act(state)
 
-        action, logprob, entropy = self.policy.act(state)
+            # Store CPU versions in buffer
+            self.buffer.states.append(state.cpu().numpy())
+            self.buffer.actions.append(action.item())
+            self.buffer.logprobs.append(logprob.item())
 
-        self.buffer.states.append(state.cpu().numpy())  # Store as CPU tensor for compatibility
-        self.buffer.actions.append(action.item())
-        self.buffer.logprobs.append(logprob.item())
-
-        return action.item()
-
+            return action.item()
