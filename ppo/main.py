@@ -8,7 +8,7 @@ from ppo.ppo_agent import PPO
 from ppo.atari_wrapper import AtariWrapper
 from datetime import datetime
 
-LOG_PATH = "checkpoints/ppo"
+LOG_PATH = os.path.abspath("./checkpoints/ppo")
 os.makedirs(f"{LOG_PATH}/recordings", exist_ok=True)
 
 current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
