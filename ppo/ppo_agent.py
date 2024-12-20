@@ -3,8 +3,8 @@ import torch.optim as optim
 import numpy as np
 
 class PPO:
-    def __init__(self, actor_critic, input_dim, action_dim, buffer, device, learning_rate=3e-4, gamma=0.99, clip_epsilon=0.2,
-                 value_coeff=0.5, entropy_coeff=0.05, num_epochs=20):
+    def __init__(self, actor_critic, input_dim, action_dim, buffer, device, learning_rate=1e-5, gamma=0.99, clip_epsilon=0.15,
+                 value_coeff=0.5, entropy_coeff=0.03, num_epochs=25):
         self.policy = actor_critic(input_dim, action_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
         self.buffer = buffer

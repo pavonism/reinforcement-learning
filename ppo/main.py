@@ -7,11 +7,7 @@ from ppo.buffer import RolloutBuffer
 from ppo.ppo_agent import PPO
 from ppo.atari_wrapper import AtariWrapper
 from datetime import datetime
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Create directories
 LOG_PATH = "checkpoints/ppo"
 os.makedirs(f"{LOG_PATH}/recordings", exist_ok=True)
 
@@ -21,7 +17,6 @@ recordings_file_path = f"{LOG_PATH}/recordings/{current_time}"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Create environment with proper wrapping order
 env = gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array")
 env = gymnasium.wrappers.RecordVideo(
     env,
@@ -37,7 +32,7 @@ ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device)
 
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
-    max_timesteps = int(1e6)
+    max_timesteps = int(2e6)
     update_timestep = 2048
     time_step = 0
     episode_rewards = []
