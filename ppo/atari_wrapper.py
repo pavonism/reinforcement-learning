@@ -14,7 +14,7 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         self.observation_space = gymnasium.spaces.Box(
             low=0, 
             high=1.0,
-            shape=(frame_stack, screen_size, screen_size),
+            shape=(frame_stack*3, screen_size, screen_size),
             dtype=np.float32
         )
 
@@ -27,7 +27,7 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         for _ in range(self.frame_stack):
             self.frames.append(processed_frame)
             
-        stacked_frames = np.stack(self.frames, axis=0)
+        stacked_frames = np.concatenate(self.frames, axis=0)
         return stacked_frames, info
 
     def step(self, action):
@@ -35,11 +35,10 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         processed_frame = self.preprocess_frame(observation)
         self.frames.append(processed_frame)
         
-        stacked_frames = np.stack(self.frames, axis=0)
+        stacked_frames = np.concatenate(self.frames, axis=0)
         return stacked_frames, reward, terminated, truncated, info
 
     def preprocess_frame(self, frame):
-        # Convert to grayscale and resize
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         frame = cv2.resize(frame, (self.screen_size, self.screen_size))
-        return frame.astype(np.float32) / 255.0
+        frame = frame.astype(np.float32) / 255.0
+        return np.transpose(frame, (2, 0, 1))

@@ -59,7 +59,6 @@ class PPO:
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             action, logprob, entropy = self.policy.act(state)
 
-            # Store CPU versions in buffer
             self.buffer.states.append(state.cpu().numpy())
             self.buffer.actions.append(action.item())
             self.buffer.logprobs.append(logprob.item())
