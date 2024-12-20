@@ -36,6 +36,8 @@ class ActorCritic(nn.Module):
         self.apply(self._weights_init)
 
     def forward(self, x):
+        if x.dim() == 5:
+            x = x.squeeze(1)
         shared_features = self.shared_layers(x)
         action_probs = self.actor_head(shared_features)
         value = self.critic_head(shared_features)

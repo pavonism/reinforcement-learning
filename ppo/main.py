@@ -33,7 +33,7 @@ ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device)
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
     max_timesteps = int(2e6)
-    update_timestep = 2048
+    update_timestep = 4096
     time_step = 0
     episode_rewards = []
     episode = 0
