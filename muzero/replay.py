@@ -48,8 +48,7 @@ class ReplayBuffer:
     def sample(self, steps: int, td_steps: int, batch_size: int) -> BatchedExperiences:
         selected_indexes = np.random.choice(
             min(self._capacity, self.total_games),
-            min(batch_size, self.total_games),
-            replace=False,
+            batch_size,
         )
 
         game_pos: List[Tuple[Game, int]] = [
