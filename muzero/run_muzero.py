@@ -1,11 +1,12 @@
 import logging
-import multiprocessing
+from queue import Queue
 import threading
 import os
 import signal
 
 import gymnasium
 import ale_py
+import torch
 import wandb
 
 from muzero.context import MuZeroContext
@@ -13,10 +14,12 @@ from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero"
-games_queue = multiprocessing.Queue()
+CHECKPOINT_PATH = "checkpoints/muzero_gpu"
+games_queue = Queue()
 stop_event = threading.Event()
 replay_buffer = ReplayBuffer(capacity=1500)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print("Running on", device)
 
 if os.path.exists(f"{CHECKPOINT_PATH}/replay_buffer.gzip"):
     replay_buffer.load_from_disk(f"{CHECKPOINT_PATH}/replay_buffer.gzip")
@@ -54,6 +57,7 @@ context = MuZeroContext(
     lr_decay_steps=350e3,
     env_factory=env_factory,
     checkpoint_path=CHECKPOINT_PATH,
+    device=device,
 )
 
 network = (
@@ -66,7 +70,7 @@ network = (
         value_support_size=601,
         reward_support_size=601,
     )
-)
+).to(device)
 
 shared_context = SharedContext(
     games_queue=games_queue,

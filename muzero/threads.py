@@ -1,7 +1,6 @@
 import logging
-import multiprocessing
-from multiprocessing.synchronize import Event
 import os
+from queue import Empty, Queue
 import threading
 import time
 
@@ -28,8 +27,8 @@ class SharedContext:
     def __init__(
         self,
         network: MuZeroNetwork,
-        games_queue: multiprocessing.Queue,
-        stop_event: Event,
+        games_queue: Queue,
+        stop_event: threading.Event,
     ):
         self._latest_network = network
         self._data_queue = games_queue
@@ -52,8 +51,8 @@ class SharedContext:
 class GamesCollector(threading.Thread):
     def __init__(
         self,
-        queue: multiprocessing.Queue,
-        stop_event: Event,
+        queue: Queue,
+        stop_event: threading.Event,
         replay_buffer: ReplayBuffer,
         save_frequency: int,
         path: str,
@@ -65,8 +64,8 @@ class GamesCollector(threading.Thread):
 
     def _run(
         self,
-        queue: multiprocessing.Queue,
-        stop_event: Event,
+        queue: Queue,
+        stop_event: threading.Event,
         replay_buffer: ReplayBuffer,
         save_frequency: int,
         path: str,
@@ -75,7 +74,7 @@ class GamesCollector(threading.Thread):
 
         while not stop_event.is_set():
             try:
-                game = queue.get()
+                game = queue.get(timeout=5)
                 replay_buffer.save(game)
 
                 # if replay_buffer.total_games % save_frequency == 0:
@@ -83,8 +82,8 @@ class GamesCollector(threading.Thread):
                 replay_buffer.save_to_disk(path)
                 logging.info(f"Replay buffer saved to {path}")
 
-            except queue.empty():
-                pass
+            except Empty:
+                continue
             except EOFError:
                 pass
 
@@ -296,19 +295,25 @@ class Trainer(threading.Thread):
                 gradient_scale, value, reward, policy_logits = prediction
                 target_value, target_reward, target_policy = target
 
-                value_loss = F.cross_entropy(
-                    value.squeeze(),
-                    network.value_to_support(Tensor([[target_value]])).squeeze(),
+                target_value = (
+                    network.value_to_support(Tensor([[target_value]]))
+                    .squeeze()
+                    .to(value.device)
                 )
 
-                reward_loss = F.cross_entropy(
-                    reward.squeeze(),
-                    network.reward_to_support(Tensor([[target_reward]])).squeeze(),
+                target_reward = (
+                    network.reward_to_support(Tensor([[target_reward]]))
+                    .squeeze()
+                    .to(reward.device)
                 )
 
-                policy_loss = F.cross_entropy(
-                    policy_logits.squeeze(), Tensor(target_policy)
-                )
+                target_policy = Tensor(target_policy).to(policy_logits.device)
+
+                target_policy = Tensor(target_policy).to(policy_logits.device)
+
+                value_loss = F.cross_entropy(value.squeeze(), target_value)
+                reward_loss = F.cross_entropy(reward.squeeze(), target_reward)
+                policy_loss = F.cross_entropy(policy_logits.squeeze(), target_policy)
 
                 loss += value_loss + reward_loss + policy_loss
 

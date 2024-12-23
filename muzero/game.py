@@ -24,10 +24,17 @@ class Node(object):
 
 
 class Game(object):
-    def __init__(self, env: Env, action_space_size: int, discount: float):
+    def __init__(
+        self,
+        env: Env,
+        action_space_size: int,
+        discount: float,
+        device: str,
+    ):
         self.env = env
         self.action_space_size = action_space_size
         self.discount = discount
+        self.device = device
 
         self.states = []
         self.actions = []
@@ -110,4 +117,4 @@ class Game(object):
             state
         ).float()  # Convert to tensor and float type
         state_tensor = state_tensor.permute(2, 0, 1)  # Reshape from HWC to CHW
-        return state_tensor.unsqueeze(0)  # Add batch dimension
+        return state_tensor.unsqueeze(0).to(self.device)  # Add batch dimension
