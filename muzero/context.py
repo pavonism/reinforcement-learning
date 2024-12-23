@@ -40,7 +40,8 @@ class MuZeroContext(object):
         lr_decay_steps: float,
         env_factory: Callable[[int], Env],
         checkpoint_path: str,
-        device: str = "cpu",
+        train_device: str = "cpu",
+        act_device: str = "cpu",
         known_bounds: Optional[KnownBounds] = None,
     ):
         ### Self-Play
@@ -84,14 +85,15 @@ class MuZeroContext(object):
         self.checkpoint_path = checkpoint_path
         self._env_factory = env_factory
         self._envs = [env_factory(i) for i in range(num_actors)]
-        self.device = device
+        self.train_device = train_device
+        self.act_device = act_device
 
     def new_game(self, actor_id: int):
         return Game(
             self._envs[actor_id],
             self.n_actions,
             self.discount,
-            self.device,
+            self.act_device,
         )
 
     def visit_softmax_temperature(self, num_moves, training_steps):

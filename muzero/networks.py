@@ -223,7 +223,9 @@ class DynamicsNetwork(nn.Module):
         onehot_action = torch.reshape(onehot_action, (b, self.num_actions, h, w))
 
         x = torch.cat([hidden_state, onehot_action], dim=1)
+        # [batch_size, hidden_state_channels, h, w]
         hidden_state = self.res_blocks(self.conv_block(x))
+        # [batch_size, reward_support_size]
         reward_logits = self.reward_head(hidden_state)
 
         return hidden_state, reward_logits
@@ -587,7 +589,9 @@ class MuZeroNetwork:
 
     def _get_initial_reward_logits(self, state: Tensor):
         initial_reward = torch.zeros((state.shape[0], 1)).to(device=state.device)
-        return self._scalar_to_support(initial_reward, self._reward_support_size)
+        return self._scalar_to_support(
+            initial_reward, self._reward_support_size
+        ).squeeze()
 
     def get_total_training_steps(self):
         return 0

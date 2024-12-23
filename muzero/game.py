@@ -50,7 +50,7 @@ class Game(object):
     def terminal(self) -> bool:
         return self.done
 
-    def get_state(self, index: int):
+    def get_state(self, index: int) -> torch.Tensor:
         return self.states[index]
 
     def get_action_history(self):

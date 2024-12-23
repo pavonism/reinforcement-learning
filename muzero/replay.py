@@ -2,6 +2,8 @@ import pickle
 import gzip
 from typing import List, NamedTuple, Tuple
 import numpy as np
+from torch import Tensor
+import torch
 
 from muzero.game import Game
 
@@ -15,11 +17,12 @@ class Experience(NamedTuple):
 
 
 class BatchedExperiences(NamedTuple):
-    states: np.ndarray
-    actions: np.ndarray
-    policy_probabilities: np.ndarray
-    values: np.ndarray
-    rewards: np.ndarray
+    states: Tensor
+    gradient_scales: Tensor
+    actions: Tensor
+    values: Tensor
+    rewards: Tensor
+    policy_probabilities: Tensor
 
 
 class ReplayBuffer:
@@ -45,7 +48,13 @@ class ReplayBuffer:
         self._buffer[index] = game
         self.total_games += 1
 
-    def sample(self, steps: int, td_steps: int, batch_size: int) -> BatchedExperiences:
+    def sample(
+        self,
+        steps: int,
+        td_steps: int,
+        batch_size: int,
+        device: str,
+    ) -> BatchedExperiences:
         selected_indexes = np.random.choice(
             min(self._capacity, self.total_games),
             batch_size,
@@ -56,17 +65,41 @@ class ReplayBuffer:
             for i in selected_indexes
         ]
 
-        return [
-            (
-                g.get_state(state_index),
-                g.get_action_history()[state_index : state_index + steps],
-                g.get_targets(state_index, steps, td_steps),
+        states = []
+        gradient_scales = []
+        actions = []
+        values = []
+        rewards = []
+        policy_probabilities = []
+
+        for g, state_index in game_pos:
+            states.append(g.get_state(state_index).squeeze())
+            target_actions = g.get_action_history()[state_index : state_index + steps]
+            target_values, target_rewards, target_policy = zip(
+                *g.get_targets(state_index, steps, td_steps)
             )
-            for (g, state_index) in game_pos
-        ]
+
+            gradient_scales.append(1.0 / len(target_actions))
+
+            if len(target_actions) < steps:
+                target_actions += [0] * (steps - len(target_actions))
+
+            actions.append(target_actions)
+            values.append(target_values)
+            rewards.append(target_rewards)
+            policy_probabilities.append(target_policy)
+
+        return BatchedExperiences(
+            states=torch.stack(states).to(device),
+            gradient_scales=Tensor(gradient_scales).to(device),
+            actions=Tensor(actions).to(device),
+            values=Tensor(values).to(device),
+            rewards=Tensor(rewards).to(device),
+            policy_probabilities=Tensor(policy_probabilities).to(device),
+        )
 
     def _sample_game_position(self, game: Game):
-        return np.random.choice(len(game.states))
+        return np.random.choice(len(game.states) - 1)
 
     def to_dict(self):
         return {

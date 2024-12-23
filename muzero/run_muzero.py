@@ -18,8 +18,10 @@ CHECKPOINT_PATH = "checkpoints/muzero_gpu"
 games_queue = Queue()
 stop_event = threading.Event()
 replay_buffer = ReplayBuffer(capacity=1500)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print("Running on", device)
+train_device = "cuda" if torch.cuda.is_available() else "cpu"
+actor_device = "cpu"
+print("Training on", train_device)
+print("Acting on", actor_device)
 
 if os.path.exists(f"{CHECKPOINT_PATH}/replay_buffer.gzip"):
     replay_buffer.load_from_disk(f"{CHECKPOINT_PATH}/replay_buffer.gzip")
@@ -28,6 +30,7 @@ gymnasium.register_envs(ale_py)
 wandb.login()
 wandb.init(project="muzero")
 logging.basicConfig(level=logging.INFO)
+torch.set_printoptions(profile="full")
 
 
 def env_factory(actor_id: int):
@@ -53,12 +56,12 @@ context = MuZeroContext(
     # batch_size=1024,
     batch_size=128,
     td_steps=10,
-    num_actors=1,
+    num_actors=2,
     lr_init=0.05,
     lr_decay_steps=350e3,
     env_factory=env_factory,
     checkpoint_path=CHECKPOINT_PATH,
-    device=device,
+    train_device=train_device,
 )
 
 network = (
@@ -71,7 +74,7 @@ network = (
         value_support_size=601,
         reward_support_size=601,
     )
-).to(device)
+).to(actor_device)
 
 shared_context = SharedContext(
     games_queue=games_queue,

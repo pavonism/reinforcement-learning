@@ -14,7 +14,7 @@ import wandb
 from muzero.context import MuZeroContext
 from muzero.game import Game
 from muzero.networks import MuZeroNetwork
-from muzero.replay import ReplayBuffer
+from muzero.replay import BatchedExperiences, ReplayBuffer
 from muzero.tree_search import (
     Node,
     add_exploration_noise,
@@ -38,7 +38,7 @@ class SharedContext:
         return self._latest_network
 
     def set_network(self, network: MuZeroNetwork):
-        self._latest_network = network.clone()
+        self._latest_network = network
 
     def save_game(self, game: Game):
         game.env = None
@@ -225,7 +225,7 @@ class Trainer(threading.Thread):
     ):
         logging.info("Started trainer thread.")
 
-        network = shared_context.get_latest_network().clone()
+        network = shared_context.get_latest_network().clone().to(context.train_device)
         total_training_steps = network.get_total_training_steps()
 
         optimizer = torch.optim.SGD(
@@ -253,10 +253,11 @@ class Trainer(threading.Thread):
                     context.num_unroll_steps,
                     context.td_steps,
                     context.batch_size,
+                    context.train_device,
                 )
                 self.train_network(context, optimizer, network, batch)
 
-                shared_context.set_network(network)
+                shared_context.set_network(network.clone().to(context.act_device))
                 p_bar.update(1)
 
             self._save_network(context, network)
@@ -268,64 +269,73 @@ class Trainer(threading.Thread):
         context: MuZeroContext,
         optimizer: torch.optim.Optimizer,
         network: MuZeroNetwork,
-        batch,
+        batch: BatchedExperiences,
     ):
         loss = 0
-        for state, actions, targets in batch:
-            hidden_state, policy_logits, reward_logits, value_logits = (
-                network.initial_inference(state)
+
+        (
+            states,
+            gradient_scales,
+            actions,
+            target_values,
+            target_rewards,
+            target_policies,
+        ) = batch
+
+        hidden_states, policy_logits, reward_logits, value_logits = (
+            network.initial_inference(states)
+        )
+
+        predictions = [
+            (
+                1.0,
+                value_logits,
+                reward_logits,
+                policy_logits,
             )
-            predictions = [(1.0, value_logits, reward_logits, policy_logits)]
+        ]
 
-            for action in actions:
-                hidden_state, reward_logits, policy_logits, value_logits = (
-                    network.recurrent_inference(
-                        hidden_state,
-                        Tensor([action]).unsqueeze(0).to(hidden_state.device),
-                    )
-                )
+        for i in range(0, actions.shape[1]):
+            hidden_states, reward_logits, policy_logits, value_logits = (
+                network.recurrent_inference(hidden_states, actions[:, i])
+            )
 
-                predictions.append(
-                    (1.0 / len(actions), value_logits, reward_logits, policy_logits)
-                )
+            predictions.append(
+                (gradient_scales[i], value_logits, reward_logits, policy_logits)
+            )
 
-                hidden_state.register_hook(lambda grad: grad * 0.5)
+            hidden_states.register_hook(lambda grad: grad * 0.5)
 
-            for prediction, target in zip(predictions, targets):
-                gradient_scale, value, reward, policy_logits = prediction
-                target_value, target_reward, target_policy = target
+        for i in range(len(predictions)):
+            gradient_scale, value, reward, policy_logits = predictions[i]
+            target_value, target_reward, target_policy = (
+                target_values[:, i],
+                target_rewards[:, i],
+                target_policies[:, i],
+            )
 
-                target_value = (
-                    network.value_to_support(Tensor([[target_value]]))
-                    .squeeze()
-                    .to(value.device)
-                )
+            target_value = network.value_to_support(target_value.unsqueeze(1)).squeeze()
+            target_reward_before_support = target_reward
+            target_reward = network.reward_to_support(
+                target_reward.unsqueeze(1)
+            ).squeeze()
 
-                target_reward = (
-                    network.reward_to_support(Tensor([[target_reward]]))
-                    .squeeze()
-                    .to(reward.device)
-                )
+            value_loss = F.cross_entropy(value, target_value)
+            reward_loss = F.cross_entropy(reward, target_reward)
+            policy_loss = F.cross_entropy(policy_logits, target_policy.squeeze())
 
-                target_policy = Tensor(target_policy).to(policy_logits.device)
+            loss_component = value_loss + reward_loss + policy_loss
+            loss_component.register_hook(lambda grad: grad * gradient_scale)
+            loss += loss_component.mean()  # Original pseudocode uses sum
 
-                target_policy = Tensor(target_policy).to(policy_logits.device)
+            wandb.log(
+                {
+                    "value_loss": value_loss.mean(),
+                    "reward_loss": reward_loss.mean(),
+                    "policy_loss": policy_loss.mean(),
+                }
+            )
 
-                value_loss = F.cross_entropy(value.squeeze(), target_value)
-                reward_loss = F.cross_entropy(reward.squeeze(), target_reward)
-                policy_loss = F.cross_entropy(policy_logits.squeeze(), target_policy)
-
-                loss += value_loss + reward_loss + policy_loss
-
-                wandb.log(
-                    {
-                        "value_loss": value_loss.item(),
-                        "reward_loss": reward_loss.item(),
-                        "policy_loss": policy_loss.item(),
-                    }
-                )
-
-        loss.register_hook(lambda grad: grad * gradient_scale)
         wandb.log({"total_loss": loss.item()})
 
         optimizer.zero_grad()
