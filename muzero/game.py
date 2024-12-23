@@ -81,12 +81,11 @@ class Game(object):
                 targets.append((value, last_reward, self.child_visits[current_index]))
             else:
                 # States past the end of games are treated as absorbing states.
-                targets.append((0, last_reward, []))
+                targets.append((0, last_reward, [0] * self.action_space_size))
 
         return targets
 
     def apply_action(self, action):
-        print(action)
         state, reward, done, *_ = self.env.step(action)
         self.states.append(self._state_to_tensor(state))
         self.actions.append(action)
@@ -97,8 +96,12 @@ class Game(object):
         all_child_visits = sum(child.visit_count for child in root.children.values())
         action_space = range(self.action_space_size)
         self.child_visits.append(
-            root.children[a].visit_count / all_child_visits if a in root.children else 0
-            for a in action_space
+            list(
+                root.children[a].visit_count / all_child_visits
+                if a in root.children
+                else 0
+                for a in action_space
+            )
         )
         self.root_values.append(root.value())
 

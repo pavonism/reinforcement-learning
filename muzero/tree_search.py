@@ -48,11 +48,18 @@ def run_mcts(
 
 
 def pick_child(context: MuZeroContext, node: Node, min_max_stats: MinMaxStats):
-    _, action, child = max(
+    ucb_scores = [
         (ucb_score(context, node, child, min_max_stats), action, child)
         for action, child in node.children.items()
+    ]
+
+    max_ucb_score, action, _ = max(ucb_scores)
+
+    action = numpy.random.choice(
+        [action for ucb_score, action, _ in ucb_scores if ucb_score == max_ucb_score]
     )
-    return action, child
+
+    return action, node.children[action]
 
 
 def ucb_score(

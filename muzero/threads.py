@@ -3,11 +3,14 @@ import multiprocessing
 from multiprocessing.synchronize import Event
 import os
 import threading
+import time
 
 import numpy as np
 import torch
 from torch import Tensor
+from torch.functional import F
 from tqdm import tqdm
+import wandb
 
 from muzero.context import MuZeroContext
 from muzero.game import Game
@@ -36,52 +39,56 @@ class SharedContext:
         return self._latest_network
 
     def set_network(self, network: MuZeroNetwork):
-        self._latest_network = network
+        self._latest_network = network.clone()
 
     def save_game(self, game: Game):
         game.env = None
         self._data_queue.put(game)
 
     def is_stopped(self) -> bool:
-        self._stop_event.is_set()
+        return self._stop_event.is_set()
 
 
 class GamesCollector(threading.Thread):
     def __init__(
         self,
         queue: multiprocessing.Queue,
+        stop_event: Event,
         replay_buffer: ReplayBuffer,
         save_frequency: int,
         path: str,
     ):
         super().__init__(
             target=self._run,
-            args=(queue, replay_buffer, save_frequency, path),
+            args=(queue, stop_event, replay_buffer, save_frequency, path),
         )
 
     def _run(
         self,
         queue: multiprocessing.Queue,
+        stop_event: Event,
         replay_buffer: ReplayBuffer,
         save_frequency: int,
         path: str,
     ):
-        logging.info("Started experience collector thread.")
+        logging.info("Started games collector thread.")
 
-        while True:
+        while not stop_event.is_set():
             try:
                 game = queue.get()
                 replay_buffer.save(game)
 
-                if replay_buffer.total_games % save_frequency == 0:
-                    os.makedirs(os.path.dirname(path), exist_ok=True)
-                    replay_buffer.save_to_disk(path)
-                    logging.info(f"Replay buffer saved to {path}")
+                # if replay_buffer.total_games % save_frequency == 0:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                replay_buffer.save_to_disk(path)
+                logging.info(f"Replay buffer saved to {path}")
 
             except queue.empty():
                 pass
             except EOFError:
                 pass
+
+        logging.info("Games collector stopped.")
 
 
 class Actor(threading.Thread):
@@ -108,19 +115,41 @@ class Actor(threading.Thread):
 
         while not shared_context.is_stopped():
             network = shared_context.get_latest_network()
-            game = self.play_game(context, network)
+            game = self.play_game(context, shared_context, network)
+            wandb.log(
+                {
+                    f"game_length_actor_{self._actor_id}": len(game.actions),
+                    f"total_reward_actor_{self._actor_id}": sum(game.rewards),
+                }
+            )
             shared_context.save_game(game)
 
-    def play_game(self, context: MuZeroContext, network: MuZeroNetwork):
+        logging.info(f"Actor {self._actor_id} stopped.")
+
+    def play_game(
+        self,
+        context: MuZeroContext,
+        shared_context: SharedContext,
+        network: MuZeroNetwork,
+    ):
         game = context.new_game(self._actor_id)
 
         # First position is reserved for the trainer.
-        with tqdm(total=context.max_moves, position=self._actor_id + 1) as tqdm_bar:
-            while not game.terminal() and len(game.actions) < context.max_moves:
+        with tqdm(
+            total=context.max_moves,
+            position=self._actor_id + 1,
+            leave=False,
+            desc=f"Actor {self._actor_id}",
+        ) as tqdm_bar:
+            while (
+                not game.terminal()
+                and len(game.actions) < context.max_moves
+                and not shared_context.is_stopped()
+            ):
                 root = Node(0)
                 state = game.get_state(-1)
 
-                hidden_state, policy_logits, _ = network.initial_inference(state)
+                hidden_state, policy_logits, *_ = network.initial_inference(state)
 
                 expand_node(
                     root,
@@ -132,6 +161,7 @@ class Actor(threading.Thread):
                 add_exploration_noise(context, root)
 
                 run_mcts(context, root, game.get_action_history(), network)
+
                 action = self.select_action(
                     context,
                     len(game.get_action_history()),
@@ -198,24 +228,41 @@ class Trainer(threading.Thread):
 
         network = shared_context.get_latest_network().clone()
         total_training_steps = network.get_total_training_steps()
-        learning_rate = context.lr_init * context.lr_decay_rate ** (
-            total_training_steps / context.lr_decay_steps
+
+        optimizer = torch.optim.SGD(
+            network.get_weights(),
+            lr=context.lr_init,
+            momentum=context.momentum,
+            weight_decay=context.weight_decay,
         )
-        optimizer = torch.optim.SGD(lr=learning_rate, momentum=context.momentum)
 
         with tqdm(total=context.training_steps, position=0, desc="Trainer") as p_bar:
             for i in range(total_training_steps, context.training_steps):
-                network = shared_context.get_latest_network().clone()
-                if i % context.checkpoint_interval == 0:
-                    self._save_network(network)
+                if shared_context.is_stopped():
+                    break
 
-                batch = replay_buffer.sample(context.num_unroll_steps, context.td_steps)
+                if replay_buffer.total_games == 0:
+                    time.sleep(1)
+                    continue
+
+                self._update_lr(optimizer, context, i)
+
+                if i % context.checkpoint_interval == 0:
+                    self._save_network(context, network)
+
+                batch = replay_buffer.sample(
+                    context.num_unroll_steps,
+                    context.td_steps,
+                    context.batch_size,
+                )
                 self.train_network(context, optimizer, network, batch)
 
                 shared_context.set_network(network)
                 p_bar.update(1)
 
-            self._save_network(network)
+            self._save_network(context, network)
+
+        logging.info("Trainer stopped.")
 
     def train_network(
         self,
@@ -225,44 +272,76 @@ class Trainer(threading.Thread):
         batch,
     ):
         loss = 0
-        for image, actions, targets in batch:
-            value, reward, policy_logits, hidden_state = network.initial_inference(
-                image
+        for state, actions, targets in batch:
+            hidden_state, policy_logits, reward_logits, value_logits = (
+                network.initial_inference(state)
             )
-            predictions = [(1.0, value, reward, policy_logits)]
+            predictions = [(1.0, value_logits, reward_logits, policy_logits)]
 
-            # Recurrent steps, from action and previous hidden state.
             for action in actions:
-                value, reward, policy_logits, hidden_state = (
-                    network.recurrent_inference(hidden_state, action)
+                hidden_state, reward_logits, policy_logits, value_logits = (
+                    network.recurrent_inference(
+                        hidden_state,
+                        Tensor([action]).unsqueeze(0).to(hidden_state.device),
+                    )
                 )
-                predictions.append((1.0 / len(actions), value, reward, policy_logits))
 
-                hidden_state = self._scale_gradient(hidden_state, 0.5)
+                predictions.append(
+                    (1.0 / len(actions), value_logits, reward_logits, policy_logits)
+                )
+
+                hidden_state.register_hook(lambda grad: grad * 0.5)
 
             for prediction, target in zip(predictions, targets):
                 gradient_scale, value, reward, policy_logits = prediction
                 target_value, target_reward, target_policy = target
 
-                l = (
-                    scalar_loss(value, target_value)
-                    + scalar_loss(reward, target_reward)
-                    + tf.nn.softmax_cross_entropy_with_logits(
-                        logits=policy_logits, labels=target_policy
-                    )
+                value_loss = F.cross_entropy(
+                    value.squeeze(),
+                    network.value_to_support(Tensor([[target_value]])).squeeze(),
                 )
 
-                loss += self._scale_gradient(l, gradient_scale)
+                reward_loss = F.cross_entropy(
+                    reward.squeeze(),
+                    network.reward_to_support(Tensor([[target_reward]])).squeeze(),
+                )
 
-        for weights in network.get_weights():
-            loss += context.weight_decay * 0.5 * torch.sum(weights**2)
+                policy_loss = F.cross_entropy(
+                    policy_logits.squeeze(), Tensor(target_policy)
+                )
 
-        optimizer.minimize(loss)
+                loss += value_loss + reward_loss + policy_loss
 
-    def _scale_gradient(self, tensor: Tensor, scale: float):
-        """Scales the gradient for the backward pass."""
-        return tensor * scale + tensor.detach() * (1 - scale)
+                wandb.log(
+                    {
+                        "value_loss": value_loss.item(),
+                        "reward_loss": reward_loss.item(),
+                        "policy_loss": policy_loss.item(),
+                    }
+                )
+
+        loss.register_hook(lambda grad: grad * gradient_scale)
+        wandb.log({"total_loss": loss.item()})
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
     def _save_network(self, context: MuZeroContext, network: MuZeroNetwork):
         network.save_checkpoint(context.checkpoint_path)
         logging.info("Network saved.")
+
+    def _update_lr(
+        self,
+        optimizer: torch.optim.Optimizer,
+        context: MuZeroContext,
+        total_training_steps: int,
+    ):
+        learning_rate = context.lr_init * context.lr_decay_rate ** (
+            total_training_steps / context.lr_decay_steps
+        )
+
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = learning_rate
+
+        wandb.log({"learning_rate": learning_rate})

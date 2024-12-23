@@ -1,20 +1,30 @@
+import logging
 import multiprocessing
+import threading
 import os
+import signal
 
 import gymnasium
 import ale_py
+import wandb
 
 from muzero.context import MuZeroContext
 from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
-from muzero.threads import Actor, GamesCollector, SharedContext
+from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
 CHECKPOINT_PATH = "checkpoints/muzero"
 games_queue = multiprocessing.Queue()
-stop_event = multiprocessing.Event()
+stop_event = threading.Event()
 replay_buffer = ReplayBuffer(capacity=1500)
 
+if os.path.exists(f"{CHECKPOINT_PATH}/replay_buffer.gzip"):
+    replay_buffer.load_from_disk(f"{CHECKPOINT_PATH}/replay_buffer.gzip")
+
 gymnasium.register_envs(ale_py)
+wandb.login()
+wandb.init(project="muzero")
+logging.basicConfig(level=logging.INFO)
 
 
 def env_factory(actor_id: int):
@@ -22,6 +32,7 @@ def env_factory(actor_id: int):
         gymnasium.wrappers.RecordVideo(
             gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array"),
             f"{CHECKPOINT_PATH}/recordings/{actor_id}",
+            lambda x: True,
         ),
         screen_size=96,
         grayscale_obs=False,
@@ -34,7 +45,8 @@ context = MuZeroContext(
     max_moves=27000,  # Half an hour at action repeat 4.
     discount=0.997,
     dirichlet_alpha=0.25,
-    num_simulations=50,
+    # num_simulations=50,
+    num_simulations=10,
     batch_size=1024,
     td_steps=10,
     num_actors=1,
@@ -46,7 +58,7 @@ context = MuZeroContext(
 
 network = (
     MuZeroNetwork.from_checkpoint(CHECKPOINT_PATH)
-    if os.path.exists(CHECKPOINT_PATH)
+    if os.path.exists(f"{CHECKPOINT_PATH}/muzero_network.pt")
     else MuZeroNetwork(
         raw_state_channels=3,
         hidden_state_channels=128,
@@ -62,14 +74,21 @@ shared_context = SharedContext(
     stop_event=stop_event,
 )
 
-experience_collector = GamesCollector(
+games_collector = GamesCollector(
     queue=games_queue,
+    stop_event=stop_event,
     replay_buffer=replay_buffer,
     save_frequency=50,
     path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
 )
+games_collector.start()
 
-# experience_collector.start()
+trainer = Trainer(
+    context=context,
+    shared_context=shared_context,
+    replay_buffer=replay_buffer,
+)
+trainer.start()
 
 for actor_id in range(context.num_actors):
     actor = Actor(
@@ -79,4 +98,13 @@ for actor_id in range(context.num_actors):
     )
     actor.start()
 
-actor.join()
+
+def signal_handler(signum, frame):
+    print("Received signal, stopping threads...")
+    stop_event.set()
+
+
+signal.signal(signal.SIGINT, signal_handler)
+while not stop_event.is_set():
+    stop_event.wait(1)
+print("All threads stopped.")

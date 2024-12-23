@@ -3,7 +3,7 @@ import gzip
 from typing import List, NamedTuple, Tuple
 import numpy as np
 
-from muzero.context import Game
+from muzero.game import Game
 
 
 class Experience(NamedTuple):
@@ -34,10 +34,6 @@ class ReplayBuffer:
         ----------
         capacity: int
             The maximum number of experiences that the replay buffer can store.
-        priority_alpha: float
-            The exponent that determines how much prioritization is used.
-        priority_beta: float
-            The exponent that determines how much importance sampling is used.
         """
         self._capacity = capacity
 
@@ -52,7 +48,7 @@ class ReplayBuffer:
     def sample(self, steps: int, td_steps: int, batch_size: int) -> BatchedExperiences:
         selected_indexes = np.random.choice(
             min(self._capacity, self.total_games),
-            batch_size,
+            min(batch_size, self.total_games),
             replace=False,
         )
 
@@ -75,9 +71,9 @@ class ReplayBuffer:
 
     def to_dict(self):
         return {
+            "capacity": self._capacity,
             "buffer": self._buffer,
-            "priorities": self._priorities,
-            "total_experiences": self.total_games,
+            "total_games": self.total_games,
         }
 
     def save_to_disk(self, path: str):
@@ -87,5 +83,6 @@ class ReplayBuffer:
     def load_from_disk(self, path: str):
         with gzip.open(path, "rb") as f:
             data = pickle.load(f)
+            self._capacity = data["capacity"]
             self._buffer = data["buffer"]
-            self.total_games = data["total_experiences"]
+            self.total_games = data["total_games"]
