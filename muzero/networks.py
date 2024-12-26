@@ -357,6 +357,7 @@ class MuZeroNetwork:
         """
         super(MuZeroNetwork, self).__init__()
 
+        self.total_training_steps = 0
         self._raw_state_channels = raw_state_channels
         self._hidden_state_channels = hidden_state_channels
         self._num_actions = num_actions
@@ -588,13 +589,14 @@ class MuZeroNetwork:
         )
 
     def _get_initial_reward_logits(self, state: Tensor):
-        initial_reward = torch.zeros((state.shape[0], 1)).to(device=state.device)
+        initial_reward = torch.zeros(
+            (state.shape[0], 1),
+            requires_grad=True,
+        ).to(device=state.device)
+
         return self._scalar_to_support(
             initial_reward, self._reward_support_size
         ).squeeze()
-
-    def get_total_training_steps(self):
-        return 0
 
     def clone(self):
         cloned_network = MuZeroNetwork(
@@ -604,6 +606,8 @@ class MuZeroNetwork:
             value_support_size=self._value_support_size,
             reward_support_size=self._reward_support_size,
         )
+
+        cloned_network.total_training_steps = self.total_training_steps
 
         cloned_network.representation_network.load_state_dict(
             copy.deepcopy(self.representation_network.state_dict())
@@ -636,4 +640,4 @@ class MuZeroNetwork:
 
     @staticmethod
     def from_checkpoint(path):
-        return torch.load(f"{path}/muzero_network.pt")
+        return torch.load(f"{path}/muzero_network.pt", weights_only=False)

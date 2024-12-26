@@ -40,6 +40,7 @@ class MuZeroContext(object):
         lr_decay_steps: float,
         env_factory: Callable[[int], Env],
         checkpoint_path: str,
+        value_loss_weight: float = 1.0,
         train_device: str = "cpu",
         act_device: str = "cpu",
         known_bounds: Optional[KnownBounds] = None,
@@ -87,6 +88,7 @@ class MuZeroContext(object):
         self._envs = [env_factory(i) for i in range(num_actors)]
         self.train_device = train_device
         self.act_device = act_device
+        self.value_loss_weight = value_loss_weight
 
     def new_game(self, actor_id: int):
         return Game(

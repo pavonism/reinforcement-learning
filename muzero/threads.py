@@ -1,12 +1,11 @@
-import logging
 import os
 from queue import Empty, Queue
 import threading
 import time
+import traceback
 
 import numpy as np
 import torch
-from torch import Tensor
 from torch.functional import F
 from tqdm import tqdm
 import wandb
@@ -70,24 +69,31 @@ class GamesCollector(threading.Thread):
         save_frequency: int,
         path: str,
     ):
-        logging.info("Started games collector thread.")
+        tqdm.write("Started games collector thread.")
 
         while not stop_event.is_set():
             try:
                 game = queue.get(timeout=5)
                 replay_buffer.save(game)
 
-                # if replay_buffer.total_games % save_frequency == 0:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                replay_buffer.save_to_disk(path)
-                logging.info(f"Replay buffer saved to {path}")
+                if (
+                    replay_buffer.total_games % save_frequency == 0
+                    or replay_buffer.total_games < save_frequency
+                ):
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    replay_buffer.save_to_disk()
+                    tqdm.write(f"Replay buffer saved to {path}")
 
             except Empty:
                 continue
             except EOFError:
                 pass
+            except Exception as e:
+                tqdm.write("Games collector error:")
+                tqdm.write(str(e))
+                tqdm.write(traceback.format_exc())
 
-        logging.info("Games collector stopped.")
+        tqdm.write("Games collector stopped.")
 
 
 class Actor(threading.Thread):
@@ -110,20 +116,29 @@ class Actor(threading.Thread):
         context: MuZeroContext,
         shared_context: SharedContext,
     ):
-        logging.info(f"Started actor {self._actor_id} thread.")
+        tqdm.write(f"Started actor {self._actor_id} thread.")
 
-        while not shared_context.is_stopped():
-            network = shared_context.get_latest_network()
-            game = self.play_game(context, shared_context, network)
-            wandb.log(
-                {
-                    f"game_length_actor_{self._actor_id}": len(game.actions),
-                    f"total_reward_actor_{self._actor_id}": sum(game.rewards),
-                }
-            )
-            shared_context.save_game(game)
+        try:
+            while not shared_context.is_stopped():
+                network = shared_context.get_latest_network()
+                game = self.play_game(context, shared_context, network)
 
-        logging.info(f"Actor {self._actor_id} stopped.")
+                if not game.terminal():
+                    break
+
+                wandb.log(
+                    {
+                        f"game_length_actor_{self._actor_id}": len(game.actions),
+                        f"total_reward_actor_{self._actor_id}": sum(game.rewards),
+                    }
+                )
+                shared_context.save_game(game)
+        except Exception as e:
+            tqdm.write(f"Actor {self._actor_id} error:")
+            tqdm.write(str(e))
+            tqdm.write(traceback.format_exc())
+
+        tqdm.write(f"Actor {self._actor_id} stopped.")
 
     def play_game(
         self,
@@ -180,7 +195,7 @@ class Actor(threading.Thread):
     ):
         t = context.visit_softmax_temperature(
             num_moves=num_moves,
-            training_steps=network.get_total_training_steps(),
+            training_steps=network.total_training_steps,
         )
 
         return self.select_action_with_temperature(t, node)
@@ -223,10 +238,9 @@ class Trainer(threading.Thread):
         shared_context: SharedContext,
         replay_buffer: ReplayBuffer,
     ):
-        logging.info("Started trainer thread.")
+        tqdm.write("Started trainer thread.")
 
         network = shared_context.get_latest_network().clone().to(context.train_device)
-        total_training_steps = network.get_total_training_steps()
 
         optimizer = torch.optim.SGD(
             network.get_weights(),
@@ -235,56 +249,69 @@ class Trainer(threading.Thread):
             weight_decay=context.weight_decay,
         )
 
-        with tqdm(total=context.training_steps, position=0, desc="Trainer") as p_bar:
-            for i in range(total_training_steps, context.training_steps):
-                if shared_context.is_stopped():
-                    break
+        try:
+            with tqdm(
+                total=context.training_steps,
+                position=0,
+                desc="Trainer",
+                initial=network.total_training_steps,
+            ) as p_bar:
+                for i in range(network.total_training_steps, context.training_steps):
+                    if shared_context.is_stopped():
+                        break
 
-                if replay_buffer.total_games == 0:
-                    time.sleep(1)
-                    continue
+                    if replay_buffer.total_games == 0:
+                        time.sleep(1)
+                        continue
 
-                self._update_lr(optimizer, context, i)
+                    self._update_lr(optimizer, context, i)
 
-                if i % context.checkpoint_interval == 0:
-                    self._save_network(context, network)
+                    if i % context.checkpoint_interval == 0:
+                        self._save_network(context, network)
 
-                batch = replay_buffer.sample(
-                    context.num_unroll_steps,
-                    context.td_steps,
-                    context.batch_size,
-                    context.train_device,
-                )
-                self.train_network(context, optimizer, network, batch)
+                    batch = replay_buffer.sample(
+                        context.batch_size, context.train_device
+                    )
+                    self.train_network(
+                        context, replay_buffer, optimizer, network, batch
+                    )
+                    network.total_training_steps += 1
 
-                shared_context.set_network(network.clone().to(context.act_device))
-                p_bar.update(1)
+                    shared_context.set_network(network.clone().to(context.act_device))
+                    p_bar.update(1)
 
-            self._save_network(context, network)
+                self._save_network(context, network)
+        except Exception as e:
+            tqdm.write("Trainer error:")
+            tqdm.write(str(e))
+            tqdm.write(traceback.format_exc())
 
-        logging.info("Trainer stopped.")
+        tqdm.write("Trainer stopped.")
 
     def train_network(
         self,
         context: MuZeroContext,
+        replay_buffer: ReplayBuffer,
         optimizer: torch.optim.Optimizer,
         network: MuZeroNetwork,
         batch: BatchedExperiences,
     ):
-        loss = 0
-
         (
+            state_indexes,
             states,
             gradient_scales,
             actions,
             target_values,
             target_rewards,
             target_policies,
+            corrections,
         ) = batch
 
         hidden_states, policy_logits, reward_logits, value_logits = (
             network.initial_inference(states)
         )
+
+        priorities = np.zeros(target_values.shape)
 
         predictions = [
             (
@@ -306,6 +333,8 @@ class Trainer(threading.Thread):
 
             hidden_states.register_hook(lambda grad: grad * 0.5)
 
+        value_loss, reward_loss, policy_loss = 0, 0, 0
+
         for i in range(len(predictions)):
             gradient_scale, value, reward, policy_logits = predictions[i]
             target_value, target_reward, target_policy = (
@@ -314,37 +343,67 @@ class Trainer(threading.Thread):
                 target_policies[:, i],
             )
 
+            value_as_scalar = (
+                network.support_to_scalar(value).detach().cpu().squeeze().numpy()
+            )
+            priorities[:, i] = np.abs(
+                target_value.detach().cpu().numpy() - value_as_scalar
+            )
+
             target_value = network.value_to_support(target_value.unsqueeze(1)).squeeze()
-            target_reward_before_support = target_reward
             target_reward = network.reward_to_support(
                 target_reward.unsqueeze(1)
             ).squeeze()
 
-            value_loss = F.cross_entropy(value, target_value)
-            reward_loss = F.cross_entropy(reward, target_reward)
-            policy_loss = F.cross_entropy(policy_logits, target_policy.squeeze())
-
-            loss_component = value_loss + reward_loss + policy_loss
-            loss_component.register_hook(lambda grad: grad * gradient_scale)
-            loss += loss_component.mean()  # Original pseudocode uses sum
-
-            wandb.log(
-                {
-                    "value_loss": value_loss.mean(),
-                    "reward_loss": reward_loss.mean(),
-                    "policy_loss": policy_loss.mean(),
-                }
+            current_value_loss = F.cross_entropy(
+                value,
+                target_value,
+                reduction="none",
             )
+            current_reward_loss = F.cross_entropy(
+                reward,
+                target_reward,
+                reduction="none",
+            )
+            current_policy_loss = F.cross_entropy(
+                policy_logits,
+                target_policy.squeeze(),
+                reduction="none",
+            )
+
+            current_value_loss.register_hook(lambda grad: grad * gradient_scale)
+            current_reward_loss.register_hook(lambda grad: grad * gradient_scale)
+            current_policy_loss.register_hook(lambda grad: grad * gradient_scale)
+
+            value_loss += current_value_loss
+            reward_loss += current_reward_loss
+            policy_loss += current_policy_loss
+
+        value_loss *= corrections * context.value_loss_weight
+        reward_loss *= corrections
+        policy_loss *= corrections
+
+        loss_batch = value_loss + reward_loss + policy_loss
+        loss = loss_batch.mean()  # Original pseudocode uses sum
+
+        wandb.log(
+            {
+                "value_loss": value_loss.mean(),
+                "reward_loss": reward_loss.mean(),
+                "policy_loss": policy_loss.mean(),
+            }
+        )
 
         wandb.log({"total_loss": loss.item()})
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        replay_buffer.update_priorities(state_indexes, priorities)
 
     def _save_network(self, context: MuZeroContext, network: MuZeroNetwork):
         network.save_checkpoint(context.checkpoint_path)
-        logging.info("Network saved.")
+        tqdm.write("Network saved.")
 
     def _update_lr(
         self,

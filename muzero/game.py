@@ -44,8 +44,11 @@ class Game(object):
         self.child_visits = []
         self.root_values = []
 
-        state, *_ = env.reset()
-        self.states.append(self._state_to_tensor(state))
+        self.priorities = []
+
+        if env is not None:
+            state, *_ = env.reset()
+            self.states.append(self._state_to_tensor(state))
 
     def terminal(self) -> bool:
         return self.done
@@ -55,6 +58,18 @@ class Game(object):
 
     def get_action_history(self):
         return self.actions
+
+    def get_state_initial_priority(self, state_index: int, td_steps: int):
+        bootstrap_index = state_index + td_steps
+        value = 0
+
+        for i, reward in enumerate(self.rewards[state_index:bootstrap_index]):
+            value += reward * self.discount**i
+
+        if bootstrap_index < len(self.root_values):
+            value += self.root_values[bootstrap_index] * self.discount**td_steps
+
+        return abs(value)
 
     def get_targets(
         self,
@@ -118,3 +133,37 @@ class Game(object):
         ).float()  # Convert to tensor and float type
         state_tensor = state_tensor.permute(2, 0, 1)  # Reshape from HWC to CHW
         return state_tensor.unsqueeze(0).to(self.device)  # Add batch dimension
+
+    def to_dict(self):
+        return {
+            "type": "Game",
+            "states": self.states,
+            "actions": self.actions,
+            "discount": self.discount,
+            "rewards": self.rewards,
+            "done": self.done,
+            "child_visits": self.child_visits,
+            "root_values": self.root_values,
+            "priorities": self.priorities,
+            "action_space_size": self.action_space_size,
+            "device": self.device,
+        }
+
+    @staticmethod
+    def from_dict(data):
+        game = Game(
+            env=None,
+            action_space_size=data["action_space_size"],
+            discount=data["discount"],
+            device=data["device"],
+        )
+
+        game.states = data["states"]
+        game.actions = data["actions"]
+        game.discount = data["discount"]
+        game.rewards = data["rewards"]
+        game.done = data["done"]
+        game.child_visits = data["child_visits"]
+        game.root_values = data["root_values"]
+        game.priorities = data["priorities"]
+        return game

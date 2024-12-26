@@ -1,4 +1,3 @@
-import logging
 from queue import Queue
 import threading
 import os
@@ -7,6 +6,7 @@ import signal
 import gymnasium
 import ale_py
 import torch
+from tqdm import tqdm
 import wandb
 
 from muzero.context import MuZeroContext
@@ -14,22 +14,17 @@ from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero_gpu"
+CHECKPOINT_PATH = "checkpoints/muzero_gpu_priorities"
 games_queue = Queue()
 stop_event = threading.Event()
-replay_buffer = ReplayBuffer(capacity=1500)
 train_device = "cuda" if torch.cuda.is_available() else "cpu"
 actor_device = "cpu"
 print("Training on", train_device)
 print("Acting on", actor_device)
 
-if os.path.exists(f"{CHECKPOINT_PATH}/replay_buffer.gzip"):
-    replay_buffer.load_from_disk(f"{CHECKPOINT_PATH}/replay_buffer.gzip")
-
 gymnasium.register_envs(ale_py)
 wandb.login()
 wandb.init(project="muzero")
-logging.basicConfig(level=logging.INFO)
 torch.set_printoptions(profile="full")
 
 
@@ -37,7 +32,7 @@ def env_factory(actor_id: int):
     return gymnasium.wrappers.AtariPreprocessing(
         gymnasium.wrappers.RecordVideo(
             gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array"),
-            f"{CHECKPOINT_PATH}/recordings/{actor_id}",
+            f"{CHECKPOINT_PATH}/recordings6/{actor_id}",
             lambda x: True,
         ),
         screen_size=96,
@@ -62,6 +57,14 @@ context = MuZeroContext(
     env_factory=env_factory,
     checkpoint_path=CHECKPOINT_PATH,
     train_device=train_device,
+    value_loss_weight=0.25,
+)
+
+replay_buffer = ReplayBuffer(
+    capacity=130,
+    td_steps=context.td_steps,
+    unroll_steps=context.num_unroll_steps,
+    path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
 )
 
 network = (
@@ -86,7 +89,7 @@ games_collector = GamesCollector(
     queue=games_queue,
     stop_event=stop_event,
     replay_buffer=replay_buffer,
-    save_frequency=50,
+    save_frequency=10,
     path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
 )
 games_collector.start()
@@ -108,11 +111,10 @@ for actor_id in range(context.num_actors):
 
 
 def signal_handler(signum, frame):
-    print("Received signal, stopping threads...")
+    tqdm.write("Received signal, stopping threads...")
     stop_event.set()
 
 
 signal.signal(signal.SIGINT, signal_handler)
 while not stop_event.is_set():
     stop_event.wait(1)
-print("All threads stopped.")

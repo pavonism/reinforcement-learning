@@ -34,8 +34,8 @@ def run_mcts(
             network.recurrent_inference(parent.hidden_state, Tensor([[last_action]]))
         )
 
-        reward = network.support_to_scalar(reward_logits)
-        value = network.support_to_scalar(value_logits)
+        reward = network.support_to_scalar(reward_logits).item()
+        value = network.support_to_scalar(value_logits).item()
 
         expand_node(node, hidden_state, policy_logits, reward)
 
