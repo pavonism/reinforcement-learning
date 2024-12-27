@@ -53,8 +53,43 @@ class Game(object):
     def terminal(self) -> bool:
         return self.done
 
-    def get_state(self, index: int) -> torch.Tensor:
-        return self.states[index]
+    def get_state(
+        self,
+        index: int,
+        n_states_representation: int,
+        n_actions_representation: int,
+    ) -> torch.Tensor:
+        stacked_states = self.states[
+            max(index + 1 - n_states_representation, 0) : index + 1
+        ]
+
+        if not stacked_states:
+            print(len(self.states), index, n_states_representation)
+
+        if len(stacked_states) < n_states_representation:
+            stacked_states = [torch.zeros_like(stacked_states[0])] * (
+                n_states_representation - len(stacked_states)
+            ) + stacked_states
+
+        stacked_states = torch.cat(stacked_states, dim=1).float() / 255.0
+
+        picked_actions = self.actions[
+            max(index + 1 - n_actions_representation, 0) : index + 1
+        ]
+        if len(picked_actions) < n_actions_representation:
+            picked_actions = [0] * (
+                n_actions_representation - len(picked_actions)
+            ) + picked_actions
+
+        stacked_actions = (
+            torch.tensor(picked_actions)
+            .view(-1, *np.ones(len(stacked_states.shape[2:])).astype(int))
+            .expand(-1, *stacked_states.shape[2:])
+            .unsqueeze(0)
+            .float()
+        ) / 18.0
+
+        return torch.cat([stacked_states, stacked_actions], dim=1)
 
     def get_action_history(self):
         return self.actions

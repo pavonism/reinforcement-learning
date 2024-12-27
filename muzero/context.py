@@ -40,6 +40,8 @@ class MuZeroContext(object):
         lr_decay_steps: float,
         env_factory: Callable[[int], Env],
         checkpoint_path: str,
+        n_states_representation: int = 32,
+        n_actions_representation: int = 32,
         value_loss_weight: float = 1.0,
         train_device: str = "cpu",
         act_device: str = "cpu",
@@ -82,6 +84,10 @@ class MuZeroContext(object):
         self.lr_init = lr_init
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = lr_decay_steps
+
+        # Representation function parameters
+        self.n_states_representation = n_states_representation
+        self.n_actions_representation = n_actions_representation
 
         self.checkpoint_path = checkpoint_path
         self._env_factory = env_factory

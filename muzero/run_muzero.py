@@ -8,13 +8,14 @@ import ale_py
 import torch
 from tqdm import tqdm
 import wandb
+import time
 
 from muzero.context import MuZeroContext
 from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero_gpu_priorities"
+CHECKPOINT_PATH = "checkpoints/muzero_stacked"
 games_queue = Queue()
 stop_event = threading.Event()
 train_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -24,7 +25,7 @@ print("Acting on", actor_device)
 
 gymnasium.register_envs(ale_py)
 wandb.login()
-wandb.init(project="muzero")
+wandb.init(project="muzero", id="6kf0ghha", resume="must")
 torch.set_printoptions(profile="full")
 
 
@@ -32,7 +33,7 @@ def env_factory(actor_id: int):
     return gymnasium.wrappers.AtariPreprocessing(
         gymnasium.wrappers.RecordVideo(
             gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array"),
-            f"{CHECKPOINT_PATH}/recordings6/{actor_id}",
+            f"{CHECKPOINT_PATH}/recordings_{int(time.time())}/{actor_id}",
             lambda x: True,
         ),
         screen_size=96,
@@ -49,7 +50,7 @@ context = MuZeroContext(
     # num_simulations=50,
     num_simulations=10,
     # batch_size=1024,
-    batch_size=128,
+    batch_size=256,
     td_steps=10,
     num_actors=2,
     lr_init=0.05,
@@ -71,8 +72,9 @@ network = (
     MuZeroNetwork.from_checkpoint(CHECKPOINT_PATH)
     if os.path.exists(f"{CHECKPOINT_PATH}/muzero_network.pt")
     else MuZeroNetwork(
-        raw_state_channels=3,
-        hidden_state_channels=128,
+        raw_state_channels=context.n_states_representation * 3
+        + context.n_actions_representation,
+        hidden_state_channels=256,
         num_actions=context.n_actions,
         value_support_size=601,
         reward_support_size=601,

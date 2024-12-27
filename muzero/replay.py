@@ -80,6 +80,8 @@ class ReplayBuffer:
         self,
         batch_size: int,
         device: str,
+        n_states_representation: int,
+        n_actions_representation: int,
     ) -> BatchedExperiences:
         selected_indexes = np.random.choice(
             self._capacity,
@@ -87,8 +89,13 @@ class ReplayBuffer:
             p=self._priorities / np.sum(self._priorities),
         )
 
-        game_pos: List[Tuple[int, int]] = [
-            (i, self._sample_game_position(self._buffer[i])) for i in selected_indexes
+        game_pos = [
+            (self._get_absolute_game_index(i), self._buffer[i])
+            for i in selected_indexes
+        ]
+
+        game_pos: List[Tuple[Game, int, int]] = [
+            (g, i, self._sample_game_position(g)) for i, g in game_pos
         ]
 
         states = []
@@ -99,9 +106,14 @@ class ReplayBuffer:
         policy_probabilities = []
         corrections = []
 
-        for game_index, state_index in game_pos:
-            g = self._buffer[game_index]
-            states.append(g.get_state(state_index).squeeze())
+        for g, game_index, state_index in game_pos:
+            states.append(
+                g.get_state(
+                    state_index,
+                    n_states_representation,
+                    n_actions_representation,
+                ).squeeze()
+            )
             target_actions = g.get_action_history()[
                 state_index : state_index + self._unroll_steps
             ]
@@ -122,7 +134,7 @@ class ReplayBuffer:
                 1
                 / (
                     self.total_samples
-                    * self._priorities[game_index]
+                    * self._priorities[self._get_relative_game_index(game_index)]
                     * g.priorities[state_index]
                 )
             )
@@ -139,7 +151,7 @@ class ReplayBuffer:
         )
 
     def _sample_game_position(self, game: Game):
-        return np.random.choice(len(game.root_values), p=game.priorities)
+        return np.random.choice(len(game.states) - 1, p=game.priorities)
 
     def to_dict(self):
         return {
@@ -188,6 +200,9 @@ class ReplayBuffer:
 
     def update_priorities(self, indexes: List[StateIndex], priorities: np.ndarray):
         for (game_index, first_index), game_priorities in zip(indexes, priorities):
+            if self._has_game_beed_replaced(game_index):
+                continue
+
             game = self._buffer[game_index]
             priorities_last_index = min(
                 first_index + self._unroll_steps,
@@ -199,6 +214,16 @@ class ReplayBuffer:
             ]
             game.priorities /= np.sum(game.priorities)
             self._priorities[game_index] = np.max(game.priorities)
+
+    def _get_absolute_game_index(self, game_index: int) -> int:
+        return game_index + (self.total_games // self._capacity) * self._capacity
+
+    def _get_relative_game_index(self, game_index: int) -> int:
+        return game_index % self._capacity
+
+    def _has_game_beed_replaced(self, game_index: int) -> bool:
+        relative_game_index = self._get_relative_game_index(game_index)
+        return self._get_absolute_game_index(relative_game_index) != game_index
 
 
 class TensorJSONEncoder(json.JSONEncoder):

@@ -46,6 +46,9 @@ class SharedContext:
     def is_stopped(self) -> bool:
         return self._stop_event.is_set()
 
+    def stop(self):
+        self._stop_event.set()
+
 
 class GamesCollector(threading.Thread):
     def __init__(
@@ -92,6 +95,7 @@ class GamesCollector(threading.Thread):
                 tqdm.write("Games collector error:")
                 tqdm.write(str(e))
                 tqdm.write(traceback.format_exc())
+                stop_event.set()
 
         tqdm.write("Games collector stopped.")
 
@@ -137,6 +141,7 @@ class Actor(threading.Thread):
             tqdm.write(f"Actor {self._actor_id} error:")
             tqdm.write(str(e))
             tqdm.write(traceback.format_exc())
+            shared_context.stop()
 
         tqdm.write(f"Actor {self._actor_id} stopped.")
 
@@ -161,7 +166,11 @@ class Actor(threading.Thread):
                 and not shared_context.is_stopped()
             ):
                 root = Node(0)
-                state = game.get_state(-1)
+                state = game.get_state(
+                    len(game.states) - 1,
+                    context.n_states_representation,
+                    context.n_actions_representation,
+                )
 
                 hidden_state, policy_logits, *_ = network.initial_inference(state)
 
@@ -270,7 +279,10 @@ class Trainer(threading.Thread):
                         self._save_network(context, network)
 
                     batch = replay_buffer.sample(
-                        context.batch_size, context.train_device
+                        context.batch_size,
+                        context.train_device,
+                        context.n_states_representation,
+                        context.n_actions_representation,
                     )
                     self.train_network(
                         context, replay_buffer, optimizer, network, batch
@@ -285,6 +297,7 @@ class Trainer(threading.Thread):
             tqdm.write("Trainer error:")
             tqdm.write(str(e))
             tqdm.write(traceback.format_exc())
+            shared_context.stop()
 
         tqdm.write("Trainer stopped.")
 
