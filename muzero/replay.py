@@ -90,12 +90,13 @@ class ReplayBuffer:
         )
 
         game_pos = [
-            (self._get_absolute_game_index(i), self._buffer[i])
+            (self._buffer[i], self._get_absolute_game_index(i))
             for i in selected_indexes
         ]
 
         game_pos: List[Tuple[Game, int, int]] = [
-            (g, i, self._sample_game_position(g)) for i, g in game_pos
+            (game, game_index, self._sample_game_position(game))
+            for game, game_index in game_pos
         ]
 
         states = []
@@ -106,19 +107,19 @@ class ReplayBuffer:
         policy_probabilities = []
         corrections = []
 
-        for g, game_index, state_index in game_pos:
+        for game, game_index, state_index in game_pos:
             states.append(
-                g.get_state(
+                game.get_state(
                     state_index,
                     n_states_representation,
                     n_actions_representation,
                 ).squeeze()
             )
-            target_actions = g.get_action_history()[
+            target_actions = game.get_action_history()[
                 state_index : state_index + self._unroll_steps
             ]
             target_values, target_rewards, target_policy = zip(
-                *g.get_targets(state_index, self._unroll_steps, self._td_steps)
+                *game.get_targets(state_index, self._unroll_steps, self._td_steps)
             )
 
             gradient_scales.append(1.0 / len(target_actions))
@@ -135,12 +136,15 @@ class ReplayBuffer:
                 / (
                     self.total_samples
                     * self._priorities[self._get_relative_game_index(game_index)]
-                    * g.priorities[state_index]
+                    * game.priorities[state_index]
                 )
             )
 
         return BatchedExperiences(
-            indexes=[StateIndex(g, s) for g, s in game_pos],
+            indexes=[
+                StateIndex(game_index, state_index)
+                for _, game_index, state_index in game_pos
+            ],
             states=torch.stack(states).to(device),
             gradient_scales=Tensor(gradient_scales).to(device),
             actions=Tensor(actions).to(device),
@@ -203,7 +207,9 @@ class ReplayBuffer:
             if self._has_game_beed_replaced(game_index):
                 continue
 
+            game_index = self._get_relative_game_index(game_index)
             game = self._buffer[game_index]
+
             priorities_last_index = min(
                 first_index + self._unroll_steps,
                 len(game.priorities),
