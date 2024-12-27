@@ -97,7 +97,9 @@ class GamesCollector(threading.Thread):
                 tqdm.write(traceback.format_exc())
                 stop_event.set()
 
-        tqdm.write("Games collector stopped.")
+        tqdm.write("Games collector stopped. Saving replay buffer...")
+        replay_buffer.save_to_disk()
+        tqdm.write("Replay buffer saved.")
 
 
 class Actor(threading.Thread):
@@ -291,15 +293,15 @@ class Trainer(threading.Thread):
 
                     shared_context.set_network(network.clone().to(context.act_device))
                     p_bar.update(1)
-
-                self._save_network(context, network)
         except Exception as e:
             tqdm.write("Trainer error:")
             tqdm.write(str(e))
             tqdm.write(traceback.format_exc())
             shared_context.stop()
 
-        tqdm.write("Trainer stopped.")
+        tqdm.write("Trainer stopped. Saving network...")
+        self._save_network(context, network)
+        tqdm.write("Network saved.")
 
     def train_network(
         self,
