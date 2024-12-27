@@ -222,7 +222,14 @@ class ReplayBuffer:
             self._priorities[game_index] = np.max(game.priorities)
 
     def _get_absolute_game_index(self, game_index: int) -> int:
-        return game_index + (self.total_games // self._capacity) * self._capacity
+        absolute_game_index = (
+            self.total_games // self._capacity * self._capacity + game_index
+        )
+
+        if self.total_games % self._capacity < game_index:
+            absolute_game_index -= self._capacity
+
+        return absolute_game_index
 
     def _get_relative_game_index(self, game_index: int) -> int:
         return game_index % self._capacity
