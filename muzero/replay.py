@@ -6,6 +6,7 @@ from typing import List, NamedTuple, Tuple
 import numpy as np
 from torch import Tensor
 import torch
+from threading import Lock
 
 from muzero.game import Game
 import shutil
@@ -57,6 +58,7 @@ class ReplayBuffer:
 
         self._buffer: List[Game] = [None] * capacity
         self._priorities = np.zeros(capacity)
+        self._lock = Lock()
         self.total_games = 0
         self.total_samples = 0
 
@@ -71,10 +73,12 @@ class ReplayBuffer:
         game.priorities = np.array(game.priorities) / np.sum(game.priorities)
 
         index = self.total_games % self._capacity
-        self._buffer[index] = game
-        self._priorities[index] = np.max(game.priorities)
-        self.total_games += 1
-        self.total_samples += len(game.root_values)
+
+        with self._lock:
+            self._buffer[index] = game
+            self._priorities[index] = np.max(game.priorities)
+            self.total_games += 1
+            self.total_samples += len(game.root_values)
 
     def sample(
         self,
@@ -89,10 +93,11 @@ class ReplayBuffer:
             p=self._priorities / np.sum(self._priorities),
         )
 
-        game_pos = [
-            (self._buffer[i], self._get_absolute_game_index(i))
-            for i in selected_indexes
-        ]
+        with self._lock:
+            game_pos = [
+                (self._buffer[i], self._get_absolute_game_index(i))
+                for i in selected_indexes
+            ]
 
         game_pos: List[Tuple[Game, int, int]] = [
             (game, game_index, self._sample_game_position(game))
@@ -155,7 +160,9 @@ class ReplayBuffer:
         )
 
     def _sample_game_position(self, game: Game):
-        return np.random.choice(len(game.states) - 1, p=game.priorities)
+        return np.random.choice(
+            len(game.states) - 1, p=game.priorities / np.sum(game.priorities)
+        )
 
     def to_dict(self):
         return {
@@ -203,23 +210,24 @@ class ReplayBuffer:
             )
 
     def update_priorities(self, indexes: List[StateIndex], priorities: np.ndarray):
-        for (game_index, first_index), game_priorities in zip(indexes, priorities):
-            if self._has_game_beed_replaced(game_index):
-                continue
+        with self._lock:
+            for (game_index, first_index), game_priorities in zip(indexes, priorities):
+                if self._has_game_beed_replaced(game_index):
+                    continue
 
-            game_index = self._get_relative_game_index(game_index)
-            game = self._buffer[game_index]
+                game_index = self._get_relative_game_index(game_index)
+                game = self._buffer[game_index]
 
-            priorities_last_index = min(
-                first_index + self._unroll_steps,
-                len(game.priorities),
-            )
-            new_priorities_last_index = priorities_last_index - first_index
-            game.priorities[first_index:priorities_last_index] = game_priorities[
-                :new_priorities_last_index
-            ]
-            game.priorities /= np.sum(game.priorities)
-            self._priorities[game_index] = np.max(game.priorities)
+                priorities_last_index = min(
+                    first_index + self._unroll_steps,
+                    len(game.priorities),
+                )
+                new_priorities_last_index = priorities_last_index - first_index
+                game.priorities[first_index:priorities_last_index] = game_priorities[
+                    :new_priorities_last_index
+                ]
+                game.priorities /= np.sum(game.priorities)
+                self._priorities[game_index] = np.max(game.priorities)
 
     def _get_absolute_game_index(self, game_index: int) -> int:
         absolute_game_index = (

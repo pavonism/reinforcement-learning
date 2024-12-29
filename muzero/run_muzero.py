@@ -15,7 +15,7 @@ from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero_stacked"
+CHECKPOINT_PATH = "checkpoints/muzero_final"
 games_queue = Queue()
 stop_event = threading.Event()
 train_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,7 +25,7 @@ print("Acting on", actor_device)
 
 gymnasium.register_envs(ale_py)
 wandb.login()
-wandb.init(project="muzero", id="6kf0ghha", resume="must")
+wandb.init(project="muzero", id="mn6p3ggt", resume="must")
 torch.set_printoptions(profile="full")
 
 
@@ -62,7 +62,7 @@ context = MuZeroContext(
 )
 
 replay_buffer = ReplayBuffer(
-    capacity=130,
+    capacity=150,
     td_steps=context.td_steps,
     unroll_steps=context.num_unroll_steps,
     path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
