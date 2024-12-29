@@ -28,10 +28,12 @@ class SharedContext:
         network: MuZeroNetwork,
         games_queue: Queue,
         stop_event: threading.Event,
+        replay_buffer: ReplayBuffer,
     ):
         self._latest_network = network
         self._data_queue = games_queue
         self._stop_event = stop_event
+        self._replay_buffer = replay_buffer
 
     def get_latest_network(self):
         return self._latest_network
@@ -41,6 +43,7 @@ class SharedContext:
 
     def save_game(self, game: Game):
         game.env = None
+        self._replay_buffer.save(game)
         self._data_queue.put(game)
 
     def is_stopped(self) -> bool:
@@ -76,8 +79,7 @@ class GamesCollector(threading.Thread):
 
         while not stop_event.is_set():
             try:
-                game = queue.get(timeout=5)
-                replay_buffer.save(game)
+                queue.get(timeout=5)
 
                 if (
                     replay_buffer.total_games % save_frequency == 0

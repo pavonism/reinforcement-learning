@@ -85,6 +85,7 @@ shared_context = SharedContext(
     games_queue=games_queue,
     network=network,
     stop_event=stop_event,
+    replay_buffer=replay_buffer,
 )
 
 games_collector = GamesCollector(
