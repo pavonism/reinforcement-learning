@@ -55,7 +55,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
     episode_rewards = []
     episode = 0
     
-    print("Starting training...")
+    print("Starting training! ")
     state, _ = env.reset()
     state = torch.tensor(state, dtype=torch.float32).to(device)
     episode_reward = 0

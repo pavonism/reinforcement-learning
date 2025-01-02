@@ -3,10 +3,10 @@ import torch.optim as optim
 import numpy as np
 
 class PPO:
-    def __init__(self, actor_critic, input_dim, action_dim, buffer, device, learning_rate=5e-4, gamma=0.99, clip_epsilon=0.15,
-                 value_coeff=0.5, entropy_coeff=0.03, num_epochs=25):
+    def __init__(self, actor_critic, input_dim, action_dim, buffer, device, learning_rate=5e-4, gamma=0.99, clip_epsilon=0.2,
+                 value_coeff=0.5, entropy_coeff=0.01, num_epochs=25):
         self.policy = actor_critic(input_dim, action_dim).to(device)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate, weight_decay=1e-5)
         self.buffer = buffer
         self.device = device
         self.gamma = gamma
@@ -28,7 +28,7 @@ class PPO:
             ratios = torch.exp(logprobs - old_logprobs.detach())
             rewards = torch.tensor(rewards, dtype=torch.float32).view(-1, 1).to(self.device)
             state_values = state_values.to(self.device)
-            advantages = rewards - state_values.detach()
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             # Compute losses
             surr1 = ratios * advantages
@@ -52,6 +52,9 @@ class PPO:
 
             self.optimizer.zero_grad()
             loss.backward()
+            
+            # gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
             self.optimizer.step()
 
         self.buffer.clear()
