@@ -30,7 +30,8 @@ env = AtariWrapper(env, frame_stack=4, screen_size=84)
 input_dim = (4, 84, 84)
 action_dim = env.action_space.n
 buffer = RolloutBuffer()
-ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device)
+max_timesteps = int(2e6)
+ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device, total_timesteps=max_timesteps)
 
 
 wandb.init(
@@ -52,7 +53,6 @@ rolling_window_size = 20
 
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
-    max_timesteps = int(2e6)
     update_timestep = 4096
     time_step = 0
     episode_rewards = []
@@ -96,13 +96,16 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
                 episode_reward = 0
 
         print(f"\nUpdating PPO at timestep {time_step}...")
-        policy_loss, value_loss, entropy_loss, kl_div = ppo_agent.update()
+        policy_loss, value_loss, entropy_loss, kl_div, current_lr, current_entropy = ppo_agent.update(time_step)
+
 
         wandb.log({
             "Policy Loss": policy_loss,
             "Value Loss": value_loss,
             "Entropy Loss": entropy_loss,
             "KL Divergence": kl_div,
+            "Learning Rate": current_lr,
+            "Entropy Coefficient": current_entropy,
             "Total timesteps": time_step,
         })
 
