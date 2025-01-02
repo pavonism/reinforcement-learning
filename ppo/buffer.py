@@ -26,9 +26,27 @@ class RolloutBuffer:
             discounted_reward = reward + gamma * discounted_reward
             rewards.insert(0, discounted_reward)
         rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        
-        rewards_mean = rewards.mean()
-        rewards_std = rewards.std() + 1e-8  # Avoid division by zero
-        rewards = (rewards - rewards_mean) / rewards_std
+        return self.normalize_rewards(rewards)
 
-        return rewards
+    
+    def compute_gae(self, values, gamma=0.99, gae_lambda=0.95):
+        advantages = []
+        gae = 0
+        next_value = 0
+
+        for step in reversed(range(len(self.rewards))):
+            delta = self.rewards[step] + gamma * next_value * (1 - self.is_terminals[step]) - values[step]
+            gae = delta + gamma * gae_lambda * gae * (1 - self.is_terminals[step])
+            advantages.insert(0, gae)
+            next_value = values[step]
+
+        advantages = torch.tensor(advantages, dtype=torch.float32).to(self.device)
+
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        return advantages
+
+    def normalize_rewards(self, rewards):
+        rewards_mean = rewards.mean()
+        rewards_std = rewards.std() + 1e-8
+        return (rewards - rewards_mean) / rewards_std
+

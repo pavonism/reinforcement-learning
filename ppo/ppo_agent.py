@@ -4,7 +4,7 @@ import numpy as np
 
 class PPO:
     def __init__(self, actor_critic, input_dim, action_dim, buffer, device, learning_rate=5e-4, gamma=0.99, clip_epsilon=0.2,
-                 value_coeff=0.5, entropy_coeff=0.01, num_epochs=25):
+                 value_coeff=0.5, entropy_coeff=0.05, num_epochs=25):
         self.policy = actor_critic(input_dim, action_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate, weight_decay=1e-5)
         self.buffer = buffer
@@ -21,18 +21,20 @@ class PPO:
         actions = torch.tensor(self.buffer.actions, dtype=torch.int64).to(self.device)
         old_logprobs = torch.tensor(self.buffer.logprobs, dtype=torch.float32).to(self.device)
 
+        with torch.no_grad():
+            _, state_values = self.policy(states)
+            state_values = state_values.squeeze(-1)
+
+        advantages = self.buffer.compute_gae(state_values.cpu().numpy(), gamma=self.gamma, gae_lambda=0.95)
+
         policy_losses, value_losses, entropies, kl_divs = [], [], [], []
 
         for _ in range(self.num_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(states, actions)
             ratios = torch.exp(logprobs - old_logprobs.detach())
-            rewards = torch.tensor(rewards, dtype=torch.float32).view(-1, 1).to(self.device)
-            state_values = state_values.to(self.device)
-            
-            advantages = rewards - state_values.detach()
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # Compute losses
+            advantages = advantages.to(self.device)
+
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
 
@@ -40,11 +42,9 @@ class PPO:
             value_loss = self.value_coeff * (rewards - state_values).pow(2).mean()
             entropy_loss = -self.entropy_coeff * dist_entropy.mean()
 
-            # Approximate KL divergence
             with torch.no_grad():
                 kl_div = (ratios - 1 - torch.log(ratios)).mean().item()
 
-            # Record losses
             policy_losses.append(policy_loss.item())
             value_losses.append(value_loss.item())
             entropies.append(dist_entropy.mean().item())
@@ -54,13 +54,14 @@ class PPO:
 
             self.optimizer.zero_grad()
             loss.backward()
-            
-            # gradient clipping
+
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
             self.optimizer.step()
 
         self.buffer.clear()
         return np.mean(policy_losses), np.mean(value_losses), np.mean(entropies), np.mean(kl_divs)
+
 
 
     def select_action(self, state):

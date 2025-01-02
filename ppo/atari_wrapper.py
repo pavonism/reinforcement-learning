@@ -10,7 +10,6 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         self.screen_size = screen_size
         self.frames = deque([], maxlen=frame_stack)
         
-        # Update observation space to match frame stacking
         self.observation_space = gymnasium.spaces.Box(
             low=0, 
             high=1.0,
