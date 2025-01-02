@@ -8,6 +8,7 @@ from ppo.buffer import RolloutBuffer
 from ppo.ppo_agent import PPO
 from ppo.atari_wrapper import AtariWrapper
 from datetime import datetime
+import pandas as pd
 
 LOG_PATH = os.path.abspath("./checkpoints/ppo")
 os.makedirs(f"{LOG_PATH}/recordings", exist_ok=True)
@@ -46,6 +47,8 @@ wandb.init(
     }
 )
 
+episode_rewards = []
+rolling_window_size = 20
 
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
@@ -76,8 +79,16 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
             if done:
                 episode += 1
                 episode_rewards.append(episode_reward)
+                
+                reward_series = pd.Series(episode_rewards)
+                rolling_mean = reward_series.rolling(rolling_window_size).mean().iloc[-1] if len(reward_series) > rolling_window_size else None
+                expanding_mean = reward_series.expanding().mean().iloc[-1]
 
-                wandb.log({"Episode Reward": episode_reward, "Episode": episode, "Timesteps": time_step})
+                wandb.log({
+                    "Episode Reward": episode_reward,
+                    "Rolling Mean Reward": rolling_mean,
+                    "Expanding Mean Reward": expanding_mean,
+                })
 
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Timesteps: {time_step}")
 
@@ -92,7 +103,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
             "Value Loss": value_loss,
             "Entropy Loss": entropy_loss,
             "KL Divergence": kl_div,
-            "Timesteps": time_step,
+            "Total timesteps": time_step,
         })
 
     env.close()
