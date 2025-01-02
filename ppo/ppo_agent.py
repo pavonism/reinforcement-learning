@@ -21,13 +21,15 @@ class PPO:
         actions = torch.tensor(self.buffer.actions, dtype=torch.int64).to(self.device)
         old_logprobs = torch.tensor(self.buffer.logprobs, dtype=torch.float32).to(self.device)
 
+        policy_losses, value_losses, entropies, kl_divs = [], [], [], []
+
         for _ in range(self.num_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(states, actions)
             ratios = torch.exp(logprobs - old_logprobs.detach())
             rewards = torch.tensor(rewards, dtype=torch.float32).view(-1, 1).to(self.device)
             state_values = state_values.to(self.device)
             advantages = rewards - state_values.detach()
-            
+
             # Compute losses
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
@@ -36,6 +38,16 @@ class PPO:
             value_loss = self.value_coeff * (rewards - state_values).pow(2).mean()
             entropy_loss = -self.entropy_coeff * dist_entropy.mean()
 
+            # Approximate KL divergence
+            with torch.no_grad():
+                kl_div = (ratios - 1 - torch.log(ratios)).mean().item()
+
+            # Record losses
+            policy_losses.append(policy_loss.item())
+            value_losses.append(value_loss.item())
+            entropies.append(dist_entropy.mean().item())
+            kl_divs.append(kl_div)
+
             loss = policy_loss + value_loss + entropy_loss
 
             self.optimizer.zero_grad()
@@ -43,6 +55,8 @@ class PPO:
             self.optimizer.step()
 
         self.buffer.clear()
+        return np.mean(policy_losses), np.mean(value_losses), np.mean(entropies), np.mean(kl_divs)
+
 
     def select_action(self, state):
         with torch.no_grad():

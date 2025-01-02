@@ -1,4 +1,5 @@
 import gymnasium
+import wandb
 import ale_py
 import torch
 import os
@@ -30,6 +31,22 @@ action_dim = env.action_space.n
 buffer = RolloutBuffer()
 ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device)
 
+
+wandb.init(
+    project="ppo-atari",  # Replace with your project name
+    config={
+        "env_name": "ALE/MsPacman-v5",
+        "learning_rate": 5e-4,
+        "gamma": 0.99,
+        "clip_epsilon": 0.15,
+        "value_coeff": 0.5,
+        "entropy_coeff": 0.03,
+        "num_epochs": 25,
+        "batch_size": 64,
+    }
+)
+
+
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
     max_timesteps = int(2e6)
@@ -45,34 +62,39 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
     
     while time_step < max_timesteps:
         for _ in range(update_timestep):
-            
             action = ppo_agent.select_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
-            
             done = terminated or truncated
-            
+
             buffer.rewards.append(reward)
             buffer.is_terminals.append(done)
-            
+
             state = next_state
             episode_reward += reward
             time_step += 1
-            
+
             if done:
                 episode += 1
                 episode_rewards.append(episode_reward)
-                log_file.write(f"{episode},{episode_reward}\n")
-                log_file.flush()
-                
+
+                wandb.log({"Episode Reward": episode_reward, "Episode": episode, "Timesteps": time_step})
+
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Timesteps: {time_step}")
-                
+
                 state, _ = env.reset()
-                if isinstance(state, torch.Tensor):
-                    state = state.cpu().numpy()
                 episode_reward = 0
-        
+
         print(f"\nUpdating PPO at timestep {time_step}...")
-        ppo_agent.update()
+        policy_loss, value_loss, entropy_loss, kl_div = ppo_agent.update()
+
+        wandb.log({
+            "Policy Loss": policy_loss,
+            "Value Loss": value_loss,
+            "Entropy Loss": entropy_loss,
+            "KL Divergence": kl_div,
+            "Timesteps": time_step,
+        })
 
     env.close()
+    wandb.finish()
     print("Training complete!")
