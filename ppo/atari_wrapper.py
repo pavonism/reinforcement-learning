@@ -45,3 +45,4 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         frame = frame.astype(np.float32) / 255.0
         return np.expand_dims(frame, axis=0)
 
+

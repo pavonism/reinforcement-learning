@@ -61,16 +61,17 @@ class PPO:
     def select_action(self, state):
         with torch.no_grad():
             if isinstance(state, tuple):
-                state = state[0]  # Extract observation if state is a tuple
+                state = state[0]
 
             if isinstance(state, torch.Tensor):
                 state = state.cpu().numpy()
 
-            # Add batch dimension if needed
+            
             if len(state.shape) == 3 and state.shape[-1] == 3:
                 state = np.transpose(state, (2, 0, 1))
 
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+
             action, logprob, entropy = self.policy.act(state)
 
             self.buffer.states.append(state.cpu().numpy())
@@ -78,3 +79,4 @@ class PPO:
             self.buffer.logprobs.append(logprob.item())
 
             return action.item()
+
