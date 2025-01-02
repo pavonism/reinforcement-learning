@@ -28,6 +28,8 @@ class PPO:
             ratios = torch.exp(logprobs - old_logprobs.detach())
             rewards = torch.tensor(rewards, dtype=torch.float32).view(-1, 1).to(self.device)
             state_values = state_values.to(self.device)
+            
+            advantages = rewards - state_values.detach()
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             # Compute losses
