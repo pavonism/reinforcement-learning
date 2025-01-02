@@ -37,12 +37,12 @@ wandb.init(
     project="ppo-atari",  # Replace with your project name
     config={
         "env_name": "ALE/MsPacman-v5",
-        "learning_rate": 5e-4,
+        "learning_rate": 2.5e-4,
         "gamma": 0.99,
-        "clip_epsilon": 0.15,
-        "value_coeff": 0.5,
-        "entropy_coeff": 0.03,
-        "num_epochs": 25,
+        "clip_epsilon": 0.1,
+        "value_coeff": 0.75,
+        "entropy_coeff": 0.05,
+        "num_epochs": 15,
         "batch_size": 64,
     }
 )
