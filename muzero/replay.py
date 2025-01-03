@@ -94,14 +94,15 @@ class ReplayBuffer:
         )
 
         with self._lock:
+            total_samples = self.total_samples
             game_pos = [
-                (self._buffer[i], self._get_absolute_game_index(i))
+                (self._priorities[i], self._buffer[i], self._get_absolute_game_index(i))
                 for i in selected_indexes
             ]
 
-        game_pos: List[Tuple[Game, int, int]] = [
-            (game, game_index, self._sample_game_position(game))
-            for game, game_index in game_pos
+        game_pos: List[Tuple[float, Game, int, int]] = [
+            (game_priority, game, game_index, self._sample_game_position(game))
+            for game_priority, game, game_index in game_pos
         ]
 
         states = []
@@ -112,7 +113,7 @@ class ReplayBuffer:
         policy_probabilities = []
         corrections = []
 
-        for game, game_index, state_index in game_pos:
+        for game_priority, game, _, state_index in game_pos:
             states.append(
                 game.get_state(
                     state_index,
@@ -137,18 +138,13 @@ class ReplayBuffer:
             rewards.append(target_rewards)
             policy_probabilities.append(target_policy)
             corrections.append(
-                1
-                / (
-                    self.total_samples
-                    * self._priorities[self._get_relative_game_index(game_index)]
-                    * game.priorities[state_index]
-                )
+                1 / (total_samples * game_priority * game.priorities[state_index])
             )
 
         return BatchedExperiences(
             indexes=[
                 StateIndex(game_index, state_index)
-                for _, game_index, state_index in game_pos
+                for _, _, game_index, state_index in game_pos
             ],
             states=torch.stack(states).to(device),
             gradient_scales=Tensor(gradient_scales).to(device),
@@ -234,7 +230,7 @@ class ReplayBuffer:
             self.total_games // self._capacity * self._capacity + game_index
         )
 
-        if self.total_games % self._capacity < game_index:
+        if self.total_games % self._capacity <= game_index:
             absolute_game_index -= self._capacity
 
         return absolute_game_index

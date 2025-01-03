@@ -15,7 +15,8 @@ from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero_final"
+CHECKPOINT_PATH = "checkpoints/muzero_after_fixes"
+CHECKPOINT_TIMESTAMP = int(time.time())
 games_queue = Queue()
 stop_event = threading.Event()
 train_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,7 +26,7 @@ print("Acting on", actor_device)
 
 gymnasium.register_envs(ale_py)
 wandb.login()
-wandb.init(project="muzero", id="mn6p3ggt", resume="must")
+wandb.init(project="muzero")
 torch.set_printoptions(profile="full")
 
 
@@ -33,7 +34,7 @@ def env_factory(actor_id: int):
     return gymnasium.wrappers.AtariPreprocessing(
         gymnasium.wrappers.RecordVideo(
             gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array"),
-            f"{CHECKPOINT_PATH}/recordings_{int(time.time())}/{actor_id}",
+            f"{CHECKPOINT_PATH}/recordings_{CHECKPOINT_TIMESTAMP}/{actor_id}",
             lambda x: True,
         ),
         screen_size=96,
@@ -88,14 +89,13 @@ shared_context = SharedContext(
     replay_buffer=replay_buffer,
 )
 
-games_collector = GamesCollector(
-    queue=games_queue,
-    stop_event=stop_event,
-    replay_buffer=replay_buffer,
-    save_frequency=10,
-    path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
-)
-games_collector.start()
+for actor_id in range(context.num_actors):
+    actor = Actor(
+        actor_id=actor_id,
+        context=context,
+        shared_context=shared_context,
+    )
+    actor.start()
 
 trainer = Trainer(
     context=context,
@@ -104,13 +104,14 @@ trainer = Trainer(
 )
 trainer.start()
 
-for actor_id in range(context.num_actors):
-    actor = Actor(
-        actor_id=actor_id,
-        context=context,
-        shared_context=shared_context,
-    )
-    actor.start()
+games_collector = GamesCollector(
+    queue=games_queue,
+    stop_event=stop_event,
+    replay_buffer=replay_buffer,
+    save_frequency=10,
+    path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
+)
+games_collector.start()
 
 
 def signal_handler(signum, frame):
