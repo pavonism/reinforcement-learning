@@ -31,7 +31,7 @@ env = gymnasium.wrappers.RecordVideo(
 env = AtariWrapper(env, frame_stack=4, screen_size=84)
 
 high_score = float('-inf')
-checkpoint_interval = 300
+checkpoint_interval = 500
 
 input_dim = (4, 84, 84)
 action_dim = env.action_space.n
@@ -131,6 +131,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
                     for file in Path(recordings_path).iterdir():
                         if file.is_file():
                             videos_artifact.add_file(file)
+                            Path.unlink(file, missing_ok=True)
                     wandb.log_artifact(videos_artifact)
                     
                     log_file.flush()
