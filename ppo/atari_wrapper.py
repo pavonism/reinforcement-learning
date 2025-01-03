@@ -43,5 +43,3 @@ class AtariWrapper(gymnasium.ObservationWrapper):
         frame = cv2.resize(frame, (self.screen_size, self.screen_size))
         frame = frame.astype(np.float32) / 255.0
         return np.expand_dims(frame, axis=0)
-
-
