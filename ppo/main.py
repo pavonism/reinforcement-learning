@@ -31,7 +31,7 @@ env = gymnasium.wrappers.RecordVideo(
 env = AtariWrapper(env, frame_stack=4, screen_size=84)
 
 high_score = float('-inf')
-checkpoint_interval = 10
+checkpoint_interval = 300
 
 input_dim = (4, 84, 84)
 action_dim = env.action_space.n
