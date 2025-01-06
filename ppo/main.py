@@ -48,7 +48,8 @@ def init_wandb():
             "num_epochs": 15,
             "batch_size": 256,
         },
-        resume="allow",
+        id="9zfqcg9t",
+        resume="must",
     )
     wandb.config.update({"starting_episode": episode}, allow_val_change=True)
 
