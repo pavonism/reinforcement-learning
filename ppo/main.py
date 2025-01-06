@@ -174,7 +174,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
                     "Episode Length": curr_episode_length,
                     "Rolling Mean Length": rolling_mean_length,
                     "Expanding Mean Length": expanding_mean_length
-                }, step=episode)
+                })
 
                 log_file.write(f"Episode {episode} | Reward: {episode_reward:.2f} | Timesteps: {curr_episode_length} | Total timesteps: {time_step}\n")
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Timesteps: {curr_episode_length}")
@@ -225,7 +225,7 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
             "Learning Rate": current_lr,
             "Entropy Coefficient": current_entropy,
             "Total timesteps": time_step,
-        }, step=episode)
+        })
 
     env.close()
     wandb.finish()
