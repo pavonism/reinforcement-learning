@@ -67,11 +67,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser(description="Train PPO on Atari games with optional checkpoint loading.")
 parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file to load.")
+parser.add_argument("--log", type=str, help="Path to the log file to load.")
 args = parser.parse_args()
 
-parser = argparse.ArgumentParser(description="Train PPO on Atari games with optional checkpoint loading.")
-parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file to load.")
-args = parser.parse_args()
 
 env = gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array")
 env = gymnasium.wrappers.RecordVideo(
@@ -90,6 +88,7 @@ buffer = RolloutBuffer()
 max_timesteps = int(1e7)
 episode = 0
 time_step = 0
+episode_rewards, episode_lengths = [], []
 ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device, total_timesteps=max_timesteps)
 
 if args.checkpoint:
@@ -106,17 +105,30 @@ if args.checkpoint:
     buffer.clear()
     ppo_agent.buffer = buffer
     print(f"Checkpoint loaded: {args.checkpoint}")
+if args.log:
+    log_file_path = args.log
+    with open(log_file_path, "r") as log_file:
+        for line in log_file:
+            if "High Score" in line:
+                match = re.search(r"High Score: ([0-9.]+)", line)
+                if match:
+                    high_score = max(high_score, float(match.group(1)))
+                continue
+            match = re.search(r"Episode (\d+) \| Reward: ([0-9.]+) \| Timesteps: (\d+)", line)
+            if match:
+                reward = float(match.group(2))
+                timesteps = int(match.group(3))
+                episode_rewards.append(reward)
+                episode_lengths.append(timesteps)
     
 log_networks_weights_and_biases(ppo_agent.policy.actor, ppo_agent.policy.critic)
 init_wandb()
 
-episode_rewards, episode_lengths = [], []
 rolling_window_size = 20
 
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
     update_timestep = 4096
-    episode_rewards = []
     
     print("Starting training! ")
     state, _ = env.reset()

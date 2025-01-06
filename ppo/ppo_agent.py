@@ -4,8 +4,8 @@ import numpy as np
 
 class PPO:
     def __init__(self, actor_critic, input_dim, action_dim, buffer, device, 
-                 learning_rate=2.5e-4, gamma=0.99, clip_epsilon=0.1,
-                 value_coeff=1, entropy_coeff=0.05, num_epochs=15,
+                 learning_rate=5e-5, gamma=0.99, clip_epsilon=0.1,
+                 value_coeff=1, entropy_coeff=0.02, num_epochs=15,
                  total_timesteps=1e7):  # Add total_timesteps parameter
         self.policy = actor_critic(input_dim, action_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate, weight_decay=1e-5)
@@ -14,7 +14,7 @@ class PPO:
         self.scheduler = optim.lr_scheduler.LinearLR(
             self.optimizer,
             start_factor=1.0,
-            end_factor=0.1,
+            end_factor=0.5,
             total_iters=int(total_timesteps / 4096)  # Decay over all updates
         )
         
