@@ -106,8 +106,8 @@ if args.checkpoint:
     ppo_agent.buffer = buffer
     print(f"Checkpoint loaded: {args.checkpoint}")
 if args.log:
-    log_file_path = args.log
-    with open(log_file_path, "r") as log_file:
+    existing_log_file_path = args.log
+    with open(existing_log_file_path, "r") as log_file:
         for line in log_file:
             if "High Score" in line:
                 match = re.search(r"High Score: ([0-9.]+)", line)
