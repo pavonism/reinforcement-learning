@@ -5,7 +5,7 @@ import numpy as np
 class PPO:
     def __init__(self, actor_critic, input_dim, action_dim, buffer, device, 
                  learning_rate=2.5e-4, gamma=0.99, clip_epsilon=0.1,
-                 value_coeff=1, entropy_coeff=0.07, num_epochs=15,
+                 value_coeff=1, entropy_coeff=0.05, num_epochs=15,
                  total_timesteps=1e7):  # Add total_timesteps parameter
         self.policy = actor_critic(input_dim, action_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate, weight_decay=1e-5)
