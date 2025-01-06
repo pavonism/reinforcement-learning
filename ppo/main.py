@@ -1,3 +1,7 @@
+import argparse
+import re
+import argparse
+import re
 import gymnasium
 import wandb
 import ale_py
@@ -11,6 +15,44 @@ from ppo.atari_wrapper import AtariWrapper
 from datetime import datetime
 import pandas as pd
 
+def log_networks_weights_and_biases(actor, critic):
+    actor_zero_weights = sum((p == 0).sum().item() for p in actor.parameters())
+    critic_zero_weights = sum((p == 0).sum().item() for p in critic.parameters())
+    total_actor_weights = sum(p.numel() for p in actor.parameters())
+    total_critic_weights = sum(p.numel() for p in critic.parameters())
+
+    actor_sparsity = actor_zero_weights / total_actor_weights
+    critic_sparsity = critic_zero_weights / total_critic_weights
+
+    print(f"Actor Sparsity: {actor_sparsity * 100:.2f}%")
+    print(f"Critic Sparsity: {critic_sparsity * 100:.2f}%")
+
+    for name, param in actor.named_parameters():
+        if param.requires_grad:
+            print(f"Actor {name}: mean={param.data.mean().item()}, std={param.data.std().item()}")
+
+    for name, param in critic.named_parameters():
+        if param.requires_grad:
+            print(f"Critic {name}: mean={param.data.mean().item()}, std={param.data.std().item()}")
+    
+def init_wandb():
+    wandb.init(
+        project="ppo-atari",
+        config={
+            "env_name": "ALE/MsPacman-v5",
+            "learning_rate": 2.5e-4,
+            "gamma": 0.99,
+            "clip_epsilon": 0.1,
+            "value_coeff": 1,
+            "entropy_coeff": 0.05,
+            "num_epochs": 15,
+            "batch_size": 256,
+        },
+        resume="allow",
+    )
+    wandb.config.update({"starting_episode": episode}, allow_val_change=True)
+
+
 LOG_PATH = os.path.abspath("./checkpoints/ppo")
 os.makedirs(f"{LOG_PATH}/recordings", exist_ok=True)
 
@@ -21,6 +63,14 @@ recordings_path = f"{LOG_PATH}/recordings/{current_time}"
 os.makedirs(checkpoint_path, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+parser = argparse.ArgumentParser(description="Train PPO on Atari games with optional checkpoint loading.")
+parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file to load.")
+args = parser.parse_args()
+
+parser = argparse.ArgumentParser(description="Train PPO on Atari games with optional checkpoint loading.")
+parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file to load.")
+args = parser.parse_args()
 
 env = gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array")
 env = gymnasium.wrappers.RecordVideo(
@@ -37,21 +87,25 @@ input_dim = (4, 84, 84)
 action_dim = env.action_space.n
 buffer = RolloutBuffer()
 max_timesteps = int(1e7)
+episode = 0
+time_step = 0
 ppo_agent = PPO(ActorCritic, input_dim, action_dim, buffer, device, total_timesteps=max_timesteps)
 
-wandb.init(
-    project="ppo-atari",
-    config={
-        "env_name": "ALE/MsPacman-v5",
-        "learning_rate": 2.5e-4,
-        "gamma": 0.99,
-        "clip_epsilon": 0.1,
-        "value_coeff": 1,
-        "entropy_coeff": 0.05,
-        "num_epochs": 15,
-        "batch_size": 256,
-    }
-)
+if args.checkpoint:
+    match = re.search(r"ppo_checkpoint-(\d+)", args.checkpoint)
+    if match:
+        loaded_episodes = int(match.group(1))
+        episode = loaded_episodes
+    checkpoint = torch.load(args.checkpoint, map_location=device)
+    ppo_agent.policy.actor.load_state_dict(checkpoint["actor_state_dict"])
+    ppo_agent.policy.critic.load_state_dict(checkpoint["critic_state_dict"])
+    ppo_agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    time_step = checkpoint["time_step"] if "time_step" in checkpoint else 0
+    buffer = checkpoint.get("buffer", buffer)
+    print(f"Checkpoint loaded: {args.checkpoint}")
+    
+log_networks_weights_and_biases(ppo_agent.policy.actor, ppo_agent.policy.critic)
+init_wandb()
 
 episode_rewards, episode_lengths = [], []
 rolling_window_size = 20
@@ -59,9 +113,7 @@ rolling_window_size = 20
 # Training loop
 with open(log_file_path, "w", encoding="utf-8") as log_file:
     update_timestep = 4096
-    time_step = 0
     episode_rewards = []
-    episode = 0
     
     print("Starting training! ")
     state, _ = env.reset()
@@ -118,7 +170,8 @@ with open(log_file_path, "w", encoding="utf-8") as log_file:
                         "critic_state_dict": ppo_agent.policy.critic.state_dict(),
                         "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
                         "time_step": time_step,  # Save current timestep
-                        "buffer": ppo_agent.buffer  # Optionally save the buffer if continuing training without resetting it
+                        "buffer": ppo_agent.buffer,  # Optionally save the buffer if continuing training without resetting it
+                        "episode": episode,
                     }
 
                     checkpoint_file = f"{checkpoint_path}/ppo_checkpoint-{episode}.pth"
