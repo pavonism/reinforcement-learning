@@ -102,6 +102,7 @@ if args.checkpoint:
     ppo_agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     time_step = checkpoint["time_step"] if "time_step" in checkpoint else 0
     ppo_agent.buffer = checkpoint.get("buffer", buffer)
+    ppo_agent.buffer.clear()
     print(f"Checkpoint loaded: {args.checkpoint}")
     
 log_networks_weights_and_biases(ppo_agent.policy.actor, ppo_agent.policy.critic)
