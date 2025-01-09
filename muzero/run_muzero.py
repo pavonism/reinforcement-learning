@@ -15,7 +15,7 @@ from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, Reanalyzer, SharedContext, Trainer
 
-CHECKPOINT_PATH = "checkpoints/muzero_fixes_priorities"
+CHECKPOINT_PATH = "checkpoints/muzero_fixed_priorities"
 CHECKPOINT_TIMESTAMP = int(time.time())
 games_queue = Queue()
 stop_event = threading.Event()
