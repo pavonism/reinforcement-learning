@@ -58,6 +58,7 @@ class ReplayBuffer:
 
         self._buffer: List[Game] = [None] * capacity
         self._priorities = np.zeros(capacity)
+        self._reanalyze_priorities = np.zeros(capacity)
         self._lock = Lock()
         self.total_games = 0
         self.total_samples = 0
@@ -70,13 +71,14 @@ class ReplayBuffer:
             priority = game.get_state_initial_priority(i, self._td_steps)
             game.priorities.append(priority)
 
-        game.priorities = np.array(game.priorities) / np.sum(game.priorities)
+        game.priorities = np.array(game.priorities)
 
         index = self.total_games % self._capacity
 
         with self._lock:
             self._buffer[index] = game
             self._priorities[index] = np.max(game.priorities)
+            self._reanalyze_priorities[index] = 1
             self.total_games += 1
             self.total_samples += len(game.root_values)
 
@@ -166,6 +168,7 @@ class ReplayBuffer:
             "buffer": self._buffer,
             "total_games": self.total_games,
             "total_samples": self.total_samples,
+            "reanalyze_priorities": self._reanalyze_priorities,
         }
 
     def get_old_path(self):
@@ -198,6 +201,10 @@ class ReplayBuffer:
             self._buffer = data["buffer"]
             self.total_games = data["total_games"]
             self.total_samples = data["total_samples"]
+            self._reanalyze_priorities = np.array(
+                data.get("reanalyze_priorities", np.zeros(self._capacity))
+            )
+            self._reanalyze_priorities[0] = 1
             self._priorities = np.array(
                 [
                     np.max(game.priorities) if game is not None else 0
@@ -222,8 +229,26 @@ class ReplayBuffer:
                 game.priorities[first_index:priorities_last_index] = game_priorities[
                     :new_priorities_last_index
                 ]
-                game.priorities /= np.sum(game.priorities)
                 self._priorities[game_index] = np.max(game.priorities)
+
+    def sample_game_for_reanalyze(self) -> Tuple[int, Game]:
+        with self._lock:
+            index = np.random.choice(
+                self._capacity,
+                p=self._reanalyze_priorities / np.sum(self._reanalyze_priorities),
+            )
+            self._reanalyze_priorities[index] = 0
+            return self._get_absolute_game_index(index), self._buffer[index]
+
+    def update_game(self, index: int, game: Game):
+        with self._lock:
+            if self._has_game_beed_replaced(index):
+                return
+
+            index = self._get_relative_game_index(index)
+            self._buffer[index] = game
+            self._priorities[index] = np.max(game.priorities)
+            self._reanalyze_priorities[: min(self.total_games, self._capacity)] += 1
 
     def _get_absolute_game_index(self, game_index: int) -> int:
         absolute_game_index = (

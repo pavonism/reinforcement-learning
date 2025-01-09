@@ -385,7 +385,7 @@ class MuZeroNetwork:
             res_blocks_per_layer=res_blocks_per_layer,
         )
 
-        self._device = "cpu"
+        self.device = "cpu"
 
     def initial_inference(self, state: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
@@ -619,10 +619,10 @@ class MuZeroNetwork:
             copy.deepcopy(self.prediction_network.state_dict())
         )
 
-        return cloned_network.to(self._device)
+        return cloned_network.to(self.device)
 
     def to(self, device):
-        self._device = device
+        self.device = device
         self.representation_network.to(device)
         self.dynamics_network.to(device)
         self.prediction_network.to(device)

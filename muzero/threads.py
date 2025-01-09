@@ -31,20 +31,28 @@ class SharedContext:
         replay_buffer: ReplayBuffer,
     ):
         self._latest_network = network
+        self._latest_network_gpu = network
         self._data_queue = games_queue
         self._stop_event = stop_event
         self._replay_buffer = replay_buffer
+
+    def get_latest_network_gpu(self):
+        return self._latest_network_gpu
 
     def get_latest_network(self):
         return self._latest_network
 
     def set_network(self, network: MuZeroNetwork):
-        self._latest_network = network
+        self._latest_network_gpu = network
+        self._latest_network = network.to("cpu")
 
     def save_game(self, game: Game):
         game.env = None
         self._replay_buffer.save(game)
         self._data_queue.put(game)
+
+    def get_total_games(self):
+        return self._replay_buffer.total_games
 
     def is_stopped(self) -> bool:
         return self._stop_event.is_set()
@@ -80,6 +88,8 @@ class GamesCollector(threading.Thread):
         while not stop_event.is_set():
             try:
                 queue.get(timeout=5)
+
+                wandb.log({"total_games": replay_buffer.total_games})
 
                 if (
                     replay_buffer.total_games % save_frequency == 0
@@ -157,10 +167,10 @@ class Actor(threading.Thread):
     ):
         game = context.new_game(self._actor_id)
 
-        # First position is reserved for the trainer.
+        # First two positions are reserved for trainer and reanalyzer
         with tqdm(
             total=context.max_moves,
-            position=self._actor_id + 1,
+            position=self._actor_id + 2,
             leave=False,
             desc=f"Actor {self._actor_id}",
         ) as tqdm_bar:
@@ -185,7 +195,11 @@ class Actor(threading.Thread):
                     reward=0,
                 )
 
-                add_exploration_noise(context, root)
+                add_exploration_noise(
+                    context.root_dirichlet_alpha,
+                    context.root_exploration_fraction,
+                    root,
+                )
 
                 run_mcts(context, root, game.get_action_history(), network)
 
@@ -293,7 +307,7 @@ class Trainer(threading.Thread):
                     )
                     network.total_training_steps += 1
 
-                    shared_context.set_network(network.clone().to(context.act_device))
+                    shared_context.set_network(network.clone())
                     p_bar.update(1)
         except Exception as e:
             tqdm.write("Trainer error:")
@@ -436,3 +450,102 @@ class Trainer(threading.Thread):
             param_group["lr"] = learning_rate
 
         wandb.log({"learning_rate": learning_rate})
+
+
+class Reanalyzer(threading.Thread):
+    def __init__(
+        self,
+        context: MuZeroContext,
+        shared_context: SharedContext,
+        replay_buffer: ReplayBuffer,
+        stop_event: threading.Event,
+    ):
+        super().__init__(
+            target=self._run,
+            args=(context, shared_context, replay_buffer, stop_event),
+        )
+
+    def _run(
+        self,
+        context: MuZeroContext,
+        shared_context: SharedContext,
+        replay_buffer: ReplayBuffer,
+        stop_event: threading.Event,
+    ):
+        tqdm.write("Started reanalyzer thread.")
+
+        try:
+            with tqdm(
+                position=1,
+                desc="Reanalyzer",
+            ) as p_bar:
+                while not stop_event.is_set():
+                    if replay_buffer.total_games == 0:
+                        time.sleep(1)
+                        continue
+
+                    network = shared_context.get_latest_network()
+                    game_index, game = replay_buffer.sample_game_for_reanalyze()
+                    previous_priority = np.max(game.priorities)
+                    new_game = game.clone_for_reanalyze()
+
+                    p_bar.reset()
+                    p_bar.total = len(new_game.states) - 1
+
+                    self.reanalyze_game(
+                        new_game,
+                        context,
+                        network,
+                        p_bar,
+                    )
+                    replay_buffer.update_game(game_index, new_game)
+                    new_priority = np.max(new_game.priorities)
+
+                    wandb.log(
+                        {
+                            "reanalyzed_game_index": game_index,
+                            "priority_change": new_priority / previous_priority,
+                        }
+                    )
+        except Exception as e:
+            tqdm.write("Reanalyzer error:")
+            tqdm.write(str(e))
+            tqdm.write(traceback.format_exc())
+            shared_context.stop()
+
+        tqdm.write("Reanalyzer stopped.")
+
+    def reanalyze_game(
+        self,
+        game: Game,
+        context: MuZeroContext,
+        network: MuZeroNetwork,
+        p_bar: tqdm,
+    ):
+        for i in range(len(game.states) - 1):
+            node = Node(0)
+            state = game.get_state(
+                i,
+                context.n_states_representation,
+                context.n_actions_representation,
+            )
+
+            hidden_state, policy_logits, *_ = network.initial_inference(state)
+
+            expand_node(
+                node,
+                hidden_state,
+                policy_logits,
+                reward=0,
+            )
+
+            run_mcts(context, node, game.get_action_history()[:i], network)
+            game.store_search_statistics(node)
+            p_bar.update(1)
+
+        game.priorities = np.array(
+            [
+                game.get_state_initial_priority(i, context.td_steps)
+                for i in range(len(game.root_values))
+            ]
+        )

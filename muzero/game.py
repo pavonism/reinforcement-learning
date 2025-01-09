@@ -104,7 +104,7 @@ class Game(object):
         if bootstrap_index < len(self.root_values):
             value += self.root_values[bootstrap_index] * self.discount**td_steps
 
-        return abs(value)
+        return abs(self.root_values[state_index] - value)
 
     def get_targets(
         self,
@@ -168,6 +168,20 @@ class Game(object):
         ).float()  # Convert to tensor and float type
         state_tensor = state_tensor.permute(2, 0, 1)  # Reshape from HWC to CHW
         return state_tensor.unsqueeze(0).to(self.device)  # Add batch dimension
+
+    def clone_for_reanalyze(self):
+        game = Game(
+            env=None,
+            action_space_size=self.action_space_size,
+            discount=self.discount,
+            device=self.device,
+        )
+
+        game.states = self.states
+        game.actions = self.actions
+        game.rewards = self.rewards
+        game.done = self.done
+        return game
 
     def to_dict(self):
         return {

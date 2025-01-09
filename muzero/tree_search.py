@@ -98,13 +98,17 @@ def expand_node(
     node.children = {action: Node(p) for action, p in enumerate(policy.squeeze())}
 
 
-def add_exploration_noise(context: MuZeroContext, node: Node):
+def add_exploration_noise(
+    root_dirichlet_alpha: float,
+    root_exploration_fraction: float,
+    node: Node,
+):
     actions = list(node.children.keys())
-    noise = numpy.random.dirichlet([context.root_dirichlet_alpha] * len(actions))
+    noise = numpy.random.dirichlet([root_dirichlet_alpha] * len(actions))
     for a, n in zip(actions, noise):
         node.children[a].probability = (
-            node.children[a].probability * (1 - context.root_exploration_fraction)
-            + n * context.root_exploration_fraction
+            node.children[a].probability * (1 - root_exploration_fraction)
+            + n * root_exploration_fraction
         )
 
 
