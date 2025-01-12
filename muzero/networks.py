@@ -1,3 +1,4 @@
+import copy
 from typing import Tuple
 import torch
 import torch.nn as nn
@@ -222,7 +223,9 @@ class DynamicsNetwork(nn.Module):
         onehot_action = torch.reshape(onehot_action, (b, self.num_actions, h, w))
 
         x = torch.cat([hidden_state, onehot_action], dim=1)
+        # [batch_size, hidden_state_channels, h, w]
         hidden_state = self.res_blocks(self.conv_block(x))
+        # [batch_size, reward_support_size]
         reward_logits = self.reward_head(hidden_state)
 
         return hidden_state, reward_logits
@@ -316,7 +319,7 @@ class PredictionNetwork(nn.Module):
         return policy_logits, value_logits
 
 
-class MuZeroNetwork(nn.Module):
+class MuZeroNetwork:
     """
     The MuZero network.
 
@@ -354,8 +357,13 @@ class MuZeroNetwork(nn.Module):
         """
         super(MuZeroNetwork, self).__init__()
 
+        self.total_training_steps = 0
+        self._raw_state_channels = raw_state_channels
+        self._hidden_state_channels = hidden_state_channels
+        self._num_actions = num_actions
         self._value_support_size = value_support_size
         self._reward_support_size = reward_support_size
+        self._res_blocks_per_layer = res_blocks_per_layer
 
         self.representation_network = RepresentationNetwork(
             raw_state_channels=raw_state_channels,
@@ -377,7 +385,9 @@ class MuZeroNetwork(nn.Module):
             res_blocks_per_layer=res_blocks_per_layer,
         )
 
-    def initial_inference(self, state: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        self.device = "cpu"
+
+    def initial_inference(self, state: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Initial inference through the MuZero network.
 
@@ -397,12 +407,15 @@ class MuZeroNetwork(nn.Module):
             Shape (batch_size, hidden_state_channels, width, height).
         policy_logits : Tensor
             The policy logits for the current game state.
+        initial_reward : Tensor
+            The initial reward logits for the current game state.
         value_logits : Tensor
             The value logits for the current game state.
         """
         hidden_state = self.to_hidden_state(state)
         policy_logits, value_logits = self.prediction_network(hidden_state)
-        return hidden_state, policy_logits, value_logits
+        initial_reward = self._get_initial_reward_logits(state)
+        return hidden_state, policy_logits, initial_reward, value_logits
 
     def recurrent_inference(
         self, hidden_state: Tensor, action: Tensor
@@ -505,10 +518,10 @@ class MuZeroNetwork(nn.Module):
         return normalized_state
 
     def value_to_support(self, logits):
-        self._scalar_to_support(logits, self._value_support_size)
+        return self._scalar_to_support(logits, self._value_support_size)
 
     def reward_to_support(self, logits):
-        self._scalar_to_support(logits, self._reward_support_size)
+        return self._scalar_to_support(logits, self._reward_support_size)
 
     def support_to_scalar(self, logits: Tensor):
         probabilities = torch.softmax(logits, dim=1)
@@ -575,5 +588,56 @@ class MuZeroNetwork(nn.Module):
             - 1
         )
 
-    def get_total_training_steps(self):
-        return 0
+    def _get_initial_reward_logits(self, state: Tensor):
+        initial_reward = torch.zeros(
+            (state.shape[0], 1),
+            requires_grad=True,
+        ).to(device=state.device)
+
+        return self._scalar_to_support(
+            initial_reward, self._reward_support_size
+        ).squeeze()
+
+    def clone(self):
+        cloned_network = MuZeroNetwork(
+            raw_state_channels=self._raw_state_channels,
+            hidden_state_channels=self._hidden_state_channels,
+            num_actions=self._num_actions,
+            value_support_size=self._value_support_size,
+            reward_support_size=self._reward_support_size,
+        )
+
+        cloned_network.total_training_steps = self.total_training_steps
+
+        cloned_network.representation_network.load_state_dict(
+            copy.deepcopy(self.representation_network.state_dict())
+        )
+        cloned_network.dynamics_network.load_state_dict(
+            copy.deepcopy(self.dynamics_network.state_dict())
+        )
+        cloned_network.prediction_network.load_state_dict(
+            copy.deepcopy(self.prediction_network.state_dict())
+        )
+
+        return cloned_network.to(self.device)
+
+    def to(self, device):
+        self.device = device
+        self.representation_network.to(device)
+        self.dynamics_network.to(device)
+        self.prediction_network.to(device)
+        return self
+
+    def save_checkpoint(self, path):
+        torch.save(self, f"{path}/muzero_network.pt")
+
+    def get_weights(self):
+        return (
+            list(self.representation_network.parameters())
+            + list(self.dynamics_network.parameters())
+            + list(self.prediction_network.parameters())
+        )
+
+    @staticmethod
+    def from_checkpoint(path):
+        return torch.load(f"{path}/muzero_network.pt", weights_only=False)

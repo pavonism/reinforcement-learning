@@ -6,10 +6,12 @@ dependencies = [
     "ale-py==0.10.1",
     "ipykernel==6.29.5",
     "matplotlib==3.9.2",
+    "line_profiler==4.2.0",
     "pandas==2.2.2",
     "pillow==11.0.0",
     "gymnasium[atari]==1.0.0",
     "gymnasium[other]==1.0.0",
+    "wandb==0.19.1"
 ]
 [build-system]
 build-backend = "flit_core.buildapi"

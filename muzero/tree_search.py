@@ -34,8 +34,8 @@ def run_mcts(
             network.recurrent_inference(parent.hidden_state, Tensor([[last_action]]))
         )
 
-        reward = network.support_to_scalar(reward_logits)
-        value = network.support_to_scalar(value_logits)
+        reward = network.support_to_scalar(reward_logits).item()
+        value = network.support_to_scalar(value_logits).item()
 
         expand_node(node, hidden_state, policy_logits, reward)
 
@@ -48,11 +48,18 @@ def run_mcts(
 
 
 def pick_child(context: MuZeroContext, node: Node, min_max_stats: MinMaxStats):
-    _, action, child = max(
+    ucb_scores = [
         (ucb_score(context, node, child, min_max_stats), action, child)
         for action, child in node.children.items()
+    ]
+
+    max_ucb_score, action, _ = max(ucb_scores)
+
+    action = numpy.random.choice(
+        [action for ucb_score, action, _ in ucb_scores if ucb_score == max_ucb_score]
     )
-    return action, child
+
+    return action, node.children[action]
 
 
 def ucb_score(
@@ -91,13 +98,17 @@ def expand_node(
     node.children = {action: Node(p) for action, p in enumerate(policy.squeeze())}
 
 
-def add_exploration_noise(context: MuZeroContext, node: Node):
+def add_exploration_noise(
+    root_dirichlet_alpha: float,
+    root_exploration_fraction: float,
+    node: Node,
+):
     actions = list(node.children.keys())
-    noise = numpy.random.dirichlet([context.root_dirichlet_alpha] * len(actions))
+    noise = numpy.random.dirichlet([root_dirichlet_alpha] * len(actions))
     for a, n in zip(actions, noise):
         node.children[a].probability = (
-            node.children[a].probability * (1 - context.root_exploration_fraction)
-            + n * context.root_exploration_fraction
+            node.children[a].probability * (1 - root_exploration_fraction)
+            + n * root_exploration_fraction
         )
 
 
