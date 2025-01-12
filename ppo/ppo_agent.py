@@ -68,7 +68,7 @@ class PPO:
 
             policy_loss = -torch.min(surr1, surr2).mean()
             value_loss = self.value_coeff * (rewards - state_values).pow(2).mean()
-            entropy_loss = -self.current_entropy_coeff * dist_entropy.mean()  # Use current entropy coeff
+            entropy_loss = -self.current_entropy_coeff * dist_entropy.mean()
 
             with torch.no_grad():
                 kl_div = (ratios - 1 - torch.log(ratios)).mean().item()
@@ -85,7 +85,6 @@ class PPO:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
             self.optimizer.step()
 
-        # Step the learning rate scheduler
         self.scheduler.step()
         
         self.buffer.clear()
