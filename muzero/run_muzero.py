@@ -14,8 +14,9 @@ from muzero.context import MuZeroContext
 from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, Reanalyzer, SharedContext, Trainer
+from muzero.wrappers import RewardCutWrapper
 
-CHECKPOINT_PATH = "checkpoints/muzero_fixed_priorities"
+CHECKPOINT_PATH = "checkpoints/muzero_more_training_cooldown"
 CHECKPOINT_TIMESTAMP = int(time.time())
 games_queue = Queue()
 stop_event = threading.Event()
@@ -26,20 +27,23 @@ print("Acting on", actor_device)
 
 gymnasium.register_envs(ale_py)
 wandb.login()
-wandb.init(project="muzero", id="lh45seoh", resume="must")
+wandb.init(project="muzero", id="je9ew74a", resume="must")
 torch.set_printoptions(profile="full")
 
 
 def env_factory(actor_id: int):
-    return gymnasium.wrappers.AtariPreprocessing(
-        gymnasium.wrappers.RecordVideo(
-            gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array", frameskip=4),
-            f"{CHECKPOINT_PATH}/recordings_{CHECKPOINT_TIMESTAMP}/{actor_id}",
-            lambda x: True,
+    return RewardCutWrapper(
+        gymnasium.wrappers.AtariPreprocessing(
+            gymnasium.wrappers.RecordVideo(
+                gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array", frameskip=4),
+                f"{CHECKPOINT_PATH}/recordings_{CHECKPOINT_TIMESTAMP}/{actor_id}",
+                lambda x: True,
+            ),
+            screen_size=96,
+            grayscale_obs=False,
+            frame_skip=1,
         ),
-        screen_size=96,
-        grayscale_obs=False,
-        frame_skip=1,
+        max_reward=100,
     )
 
 
@@ -52,9 +56,9 @@ context = MuZeroContext(
     num_simulations=10,
     # batch_size=1024,
     batch_size=256,
-    # td_steps=10,
-    td_steps=5,
-    num_actors=1,
+    td_steps=10,
+    # td_steps=5,
+    num_actors=2,
     lr_init=0.05,
     lr_decay_steps=350e3,
     env_factory=env_factory,
@@ -109,18 +113,18 @@ games_collector = GamesCollector(
     queue=games_queue,
     stop_event=stop_event,
     replay_buffer=replay_buffer,
-    save_frequency=10,
+    save_frequency=20,
     path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
 )
 games_collector.start()
 
-reanalyzer = Reanalyzer(
-    context=context,
-    shared_context=shared_context,
-    stop_event=stop_event,
-    replay_buffer=replay_buffer,
-)
-reanalyzer.start()
+# reanalyzer = Reanalyzer(
+#     context=context,
+#     shared_context=shared_context,
+#     stop_event=stop_event,
+#     replay_buffer=replay_buffer,
+# )
+# reanalyzer.start()
 
 
 def signal_handler(signum, frame):

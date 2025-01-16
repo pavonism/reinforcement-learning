@@ -276,6 +276,8 @@ class Trainer(threading.Thread):
             weight_decay=context.weight_decay,
         )
 
+        last_total_games = replay_buffer.total_games
+
         try:
             with tqdm(
                 total=context.training_steps,
@@ -284,31 +286,36 @@ class Trainer(threading.Thread):
                 initial=network.total_training_steps,
             ) as p_bar:
                 for i in range(network.total_training_steps, context.training_steps):
-                    if shared_context.is_stopped():
-                        break
-
-                    if replay_buffer.total_games == 0:
+                    if last_total_games == replay_buffer.total_games:
                         time.sleep(1)
                         continue
 
-                    self._update_lr(optimizer, context, i)
+                    n_epochs = 1 if shared_context.get_total_games() < 100 else 2
+                    n_epochs *= replay_buffer.total_games - last_total_games
+                    last_total_games = replay_buffer.total_games
 
-                    if i % context.checkpoint_interval == 0:
-                        self._save_network(context, network)
+                    for _ in range(n_epochs):
+                        if shared_context.is_stopped():
+                            break
 
-                    batch = replay_buffer.sample(
-                        context.batch_size,
-                        context.train_device,
-                        context.n_states_representation,
-                        context.n_actions_representation,
-                    )
-                    self.train_network(
-                        context, replay_buffer, optimizer, network, batch
-                    )
-                    network.total_training_steps += 1
+                        self._update_lr(optimizer, context, i)
 
-                    shared_context.set_network(network.clone())
-                    p_bar.update(1)
+                        if i % context.checkpoint_interval == 0:
+                            self._save_network(context, network)
+
+                        batch = replay_buffer.sample(
+                            context.batch_size,
+                            context.train_device,
+                            context.n_states_representation,
+                            context.n_actions_representation,
+                        )
+                        self.train_network(
+                            context, replay_buffer, optimizer, network, batch
+                        )
+                        network.total_training_steps += 1
+
+                        shared_context.set_network(network.clone())
+                        p_bar.update(1)
         except Exception as e:
             tqdm.write("Trainer error:")
             tqdm.write(str(e))
@@ -480,7 +487,7 @@ class Reanalyzer(threading.Thread):
                 desc="Reanalyzer",
             ) as p_bar:
                 while not stop_event.is_set():
-                    if replay_buffer.total_games == 0:
+                    if replay_buffer.total_games < 2:
                         time.sleep(1)
                         continue
 
