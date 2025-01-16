@@ -9,6 +9,7 @@ dependencies = [
     "line_profiler==4.2.0",
     "pandas==2.2.2",
     "pillow==11.0.0",
+    "SciencePlots==2.1.1",
     "gymnasium[atari]==1.0.0",
     "gymnasium[other]==1.0.0",
     "wandb==0.19.1"
