@@ -32,6 +32,7 @@ class SharedContext:
     ):
         self._latest_network = network
         self._latest_network_gpu = network
+        self._compiled_network = self._latest_network.clone().compile()
         self._data_queue = games_queue
         self._stop_event = stop_event
         self._replay_buffer = replay_buffer
@@ -42,9 +43,13 @@ class SharedContext:
     def get_latest_network(self):
         return self._latest_network
 
+    def get_compiled_network(self):
+        return self._latest_network
+
     def set_network(self, network: MuZeroNetwork):
         self._latest_network_gpu = network
         self._latest_network = network.to("cpu")
+        self._compiled_network = self._latest_network.clone().compile()
 
     def save_game(self, game: Game):
         game.env = None
@@ -138,7 +143,7 @@ class Actor(threading.Thread):
 
         try:
             while not shared_context.is_stopped():
-                network = shared_context.get_latest_network()
+                network = shared_context.get_compiled_network()
                 game = self.play_game(context, shared_context, network)
 
                 if not game.terminal():
@@ -276,8 +281,6 @@ class Trainer(threading.Thread):
             weight_decay=context.weight_decay,
         )
 
-        last_total_games = replay_buffer.total_games
-
         try:
             with tqdm(
                 total=context.training_steps,
@@ -286,36 +289,31 @@ class Trainer(threading.Thread):
                 initial=network.total_training_steps,
             ) as p_bar:
                 for i in range(network.total_training_steps, context.training_steps):
-                    if last_total_games == replay_buffer.total_games:
+                    if replay_buffer.total_games < 2:
                         time.sleep(1)
                         continue
 
-                    n_epochs = 1 if shared_context.get_total_games() < 100 else 2
-                    n_epochs *= replay_buffer.total_games - last_total_games
-                    last_total_games = replay_buffer.total_games
+                    if shared_context.is_stopped():
+                        break
 
-                    for _ in range(n_epochs):
-                        if shared_context.is_stopped():
-                            break
+                    self._update_lr(optimizer, context, i)
 
-                        self._update_lr(optimizer, context, i)
+                    if i % context.checkpoint_interval == 0:
+                        self._save_network(context, network)
 
-                        if i % context.checkpoint_interval == 0:
-                            self._save_network(context, network)
+                    batch = replay_buffer.sample(
+                        context.batch_size,
+                        context.train_device,
+                        context.n_states_representation,
+                        context.n_actions_representation,
+                    )
+                    self.train_network(
+                        context, replay_buffer, optimizer, network, batch
+                    )
+                    p_bar.update(1)
 
-                        batch = replay_buffer.sample(
-                            context.batch_size,
-                            context.train_device,
-                            context.n_states_representation,
-                            context.n_actions_representation,
-                        )
-                        self.train_network(
-                            context, replay_buffer, optimizer, network, batch
-                        )
-                        network.total_training_steps += 1
-
-                        shared_context.set_network(network.clone())
-                        p_bar.update(1)
+                    network.total_training_steps += 1
+                    shared_context.set_network(network.clone())
         except Exception as e:
             tqdm.write("Trainer error:")
             tqdm.write(str(e))
@@ -422,7 +420,7 @@ class Trainer(threading.Thread):
         policy_loss *= corrections
 
         loss_batch = value_loss + reward_loss + policy_loss
-        loss = loss_batch.mean()  # Original pseudocode uses sum
+        loss = loss_batch.mean()
 
         wandb.log(
             {
@@ -491,7 +489,7 @@ class Reanalyzer(threading.Thread):
                         time.sleep(1)
                         continue
 
-                    network = shared_context.get_latest_network()
+                    network = shared_context.get_compiled_network()
                     game_index, game = replay_buffer.sample_game_for_reanalyze()
                     previous_priority = np.max(game.priorities)
                     new_game = game.clone_for_reanalyze()

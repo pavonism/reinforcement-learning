@@ -628,6 +628,13 @@ class MuZeroNetwork:
         self.prediction_network.to(device)
         return self
 
+    def compile(self):
+        self.representation_network = torch.jit.script(self.representation_network)
+        self.dynamics_network = torch.jit.script(self.dynamics_network)
+        self.prediction_network = torch.jit.script(self.prediction_network)
+
+        return self
+
     def save_checkpoint(self, path):
         torch.save(self, f"{path}/muzero_network.pt")
 

@@ -16,7 +16,7 @@ from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, Reanalyzer, SharedContext, Trainer
 from muzero.wrappers import RewardCutWrapper
 
-CHECKPOINT_PATH = "checkpoints/muzero_more_training_cooldown"
+CHECKPOINT_PATH = "checkpoints/muzero"
 CHECKPOINT_TIMESTAMP = int(time.time())
 games_queue = Queue()
 stop_event = threading.Event()
@@ -27,7 +27,7 @@ print("Acting on", actor_device)
 
 gymnasium.register_envs(ale_py)
 wandb.login()
-wandb.init(project="muzero", id="je9ew74a", resume="must")
+wandb.init(project="muzero")
 torch.set_printoptions(profile="full")
 
 
@@ -113,7 +113,7 @@ games_collector = GamesCollector(
     queue=games_queue,
     stop_event=stop_event,
     replay_buffer=replay_buffer,
-    save_frequency=20,
+    save_frequency=50,
     path=f"{CHECKPOINT_PATH}/replay_buffer.gzip",
 )
 games_collector.start()
