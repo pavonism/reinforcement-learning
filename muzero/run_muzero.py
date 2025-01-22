@@ -49,7 +49,7 @@ def env_factory(actor_id: int):
 
 context = MuZeroContext(
     n_actions=9,
-    max_moves=27000,  # Half an hour at action repeat 4.
+    max_moves=27000,
     discount=0.997,
     dirichlet_alpha=0.25,
     # num_simulations=50,
