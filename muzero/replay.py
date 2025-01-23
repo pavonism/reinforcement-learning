@@ -12,14 +12,6 @@ from muzero.game import Game
 import shutil
 
 
-class Experience(NamedTuple):
-    state: np.ndarray
-    action: int
-    policy_probabilities: np.ndarray
-    value: float
-    reward: float
-
-
 class StateIndex(NamedTuple):
     game_index: int
     state_index: int
@@ -89,23 +81,19 @@ class ReplayBuffer:
         n_states_representation: int,
         n_actions_representation: int,
     ) -> BatchedExperiences:
-        selected_indexes = np.random.choice(
-            self._capacity,
-            batch_size,
-            p=self._priorities / np.sum(self._priorities),
-        )
+        selected_indexes = self._sample_indexes(batch_size)
 
         with self._lock:
             total_samples = self.total_samples
-            game_pos = [
-                (self._priorities[i], self._buffer[i], self._get_absolute_game_index(i))
+            game_data: List[Tuple[float, Game, int, int]] = [
+                (
+                    self._priorities[i],
+                    self._buffer[i],
+                    self._get_absolute_game_index(i),
+                    self._sample_game_position(self._buffer[i]),
+                )
                 for i in selected_indexes
             ]
-
-        game_pos: List[Tuple[float, Game, int, int]] = [
-            (game_priority, game, game_index, self._sample_game_position(game))
-            for game_priority, game, game_index in game_pos
-        ]
 
         states = []
         gradient_scales = []
@@ -115,7 +103,7 @@ class ReplayBuffer:
         policy_probabilities = []
         corrections = []
 
-        for game_priority, game, _, state_index in game_pos:
+        for game_priority, game, _, state_index in game_data:
             states.append(
                 game.get_state(
                     state_index,
@@ -146,7 +134,7 @@ class ReplayBuffer:
         return BatchedExperiences(
             indexes=[
                 StateIndex(game_index, state_index)
-                for _, _, game_index, state_index in game_pos
+                for _, _, game_index, state_index in game_data
             ],
             states=torch.stack(states).to(device),
             gradient_scales=Tensor(gradient_scales).to(device),
@@ -156,6 +144,15 @@ class ReplayBuffer:
             policy_probabilities=Tensor(policy_probabilities).to(device),
             corrections=Tensor(corrections).to(device) / max(corrections),
         )
+
+    def _sample_indexes(self, batch_size: int):
+        selected_indexes = np.random.choice(
+            self._capacity,
+            batch_size,
+            p=self._priorities / np.sum(self._priorities),
+        )
+
+        return selected_indexes
 
     def _sample_game_position(self, game: Game):
         return np.random.choice(
@@ -171,25 +168,25 @@ class ReplayBuffer:
             "reanalyze_priorities": self._reanalyze_priorities,
         }
 
-    def get_old_path(self):
+    def _get_old_path(self):
         return f"{self._path}.old"
 
     def save_to_disk(self):
         if os.path.exists(self._path):
-            old_path = self.get_old_path()
+            old_path = self._get_old_path()
             shutil.copyfile(self._path, old_path)
 
         with gzip.open(self._path, "wt", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, cls=TensorJSONEncoder)
 
-        if os.path.exists(self.get_old_path()):
+        if os.path.exists(self._get_old_path()):
             os.remove(old_path)
 
     def load_from_disk(self):
         if not os.path.exists(self._path):
             return
 
-        old_path = self.get_old_path()
+        old_path = self._get_old_path()
 
         if os.path.exists(old_path):
             os.remove(self._path)
