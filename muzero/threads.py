@@ -23,6 +23,8 @@ from muzero.tree_search import (
 
 
 class SharedContext:
+    """A class that holds the shared context between threads."""
+
     def __init__(
         self,
         network: MuZeroNetwork,
@@ -67,6 +69,8 @@ class SharedContext:
 
 
 class GamesCollector(threading.Thread):
+    """A thread that collects games from the queue and saves the replay buffer."""
+
     def __init__(
         self,
         queue: Queue,
@@ -120,6 +124,8 @@ class GamesCollector(threading.Thread):
 
 
 class Actor(threading.Thread):
+    """A thread that plays games and saves them to the queue."""
+
     def __init__(
         self,
         actor_id: int,
@@ -184,55 +190,68 @@ class Actor(threading.Thread):
                 and len(game.actions) < context.max_moves
                 and not shared_context.is_stopped()
             ):
-                root = Node(0)
-                state = game.get_state(
-                    len(game.states) - 1,
-                    context.n_states_representation,
-                    context.n_actions_representation,
-                )
-
-                hidden_state, policy_logits, *_ = network.initial_inference(state)
-
-                expand_node(
-                    root,
-                    hidden_state,
-                    policy_logits,
-                    reward=0,
-                )
-
-                add_exploration_noise(
-                    context.root_dirichlet_alpha,
-                    context.root_exploration_fraction,
-                    root,
-                )
-
-                run_mcts(context, root, game.get_action_history(), network)
-
-                action = self.select_action(
-                    context,
-                    len(game.get_action_history()),
-                    root,
-                    network,
-                )
-
-                game.apply_action(action)
-                game.store_search_statistics(root)
-
-                tqdm_bar.update(1)
+                self._next_step(context, network, game, tqdm_bar)
 
         return game
 
-    def select_action(
-        self, context: MuZeroContext, num_moves: int, node: Node, network: MuZeroNetwork
+    def _next_step(
+        self,
+        context: MuZeroContext,
+        network: MuZeroNetwork,
+        game: Game,
+        tqdm_bar: tqdm,
+    ):
+        root = Node(0)
+        state = game.get_state(
+            len(game.states) - 1,
+            context.n_states_representation,
+            context.n_actions_representation,
+        )
+
+        hidden_state, policy_logits, *_ = network.initial_inference(state)
+
+        expand_node(
+            root,
+            hidden_state,
+            policy_logits,
+            reward=0,
+        )
+
+        add_exploration_noise(
+            context.root_dirichlet_alpha,
+            context.root_exploration_fraction,
+            root,
+        )
+
+        run_mcts(context, root, game.get_action_history(), network)
+
+        action = self._select_action(
+            context,
+            len(game.get_action_history()),
+            root,
+            network,
+        )
+
+        game.apply_action(action)
+        game.store_search_statistics(root)
+
+        tqdm_bar.update(1)
+
+    def _select_action(
+        self,
+        context: MuZeroContext,
+        num_moves: int,
+        node: Node,
+        network: MuZeroNetwork,
     ):
         t = context.visit_softmax_temperature(
             num_moves=num_moves,
             training_steps=network.total_training_steps,
         )
 
-        return self.select_action_with_temperature(t, node)
+        return self._select_action_with_temperature(t, node)
 
-    def select_action_with_temperature(self, temperature: float, node: Node):
+    def _select_action_with_temperature(self, temperature: float, node: Node):
         visit_counts = np.array(
             [child.visit_count for child in node.children.values()], dtype="int32"
         )
@@ -253,6 +272,8 @@ class Actor(threading.Thread):
 
 
 class Trainer(threading.Thread):
+    """A thread that trains the network using the replay buffer."""
+
     def __init__(
         self,
         context: MuZeroContext,
@@ -307,9 +328,7 @@ class Trainer(threading.Thread):
                         context.n_states_representation,
                         context.n_actions_representation,
                     )
-                    self.train_network(
-                        context, replay_buffer, optimizer, network, batch
-                    )
+                    self._train_step(context, replay_buffer, optimizer, network, batch)
                     p_bar.update(1)
 
                     network.total_training_steps += 1
@@ -324,7 +343,7 @@ class Trainer(threading.Thread):
         self._save_network(context, network)
         tqdm.write("Network saved.")
 
-    def train_network(
+    def _train_step(
         self,
         context: MuZeroContext,
         replay_buffer: ReplayBuffer,
@@ -458,6 +477,11 @@ class Trainer(threading.Thread):
 
 
 class Reanalyzer(threading.Thread):
+    """
+    A thread that reanalyzes games from the replay buffer.
+    The reanalysis is done by re-running MCTS from the initial state of the game.
+    """
+
     def __init__(
         self,
         context: MuZeroContext,
@@ -497,7 +521,7 @@ class Reanalyzer(threading.Thread):
                     p_bar.reset()
                     p_bar.total = len(new_game.states) - 1
 
-                    self.reanalyze_game(
+                    self._reanalyze_game(
                         new_game,
                         context,
                         network,
@@ -520,7 +544,7 @@ class Reanalyzer(threading.Thread):
 
         tqdm.write("Reanalyzer stopped.")
 
-    def reanalyze_game(
+    def _reanalyze_game(
         self,
         game: Game,
         context: MuZeroContext,

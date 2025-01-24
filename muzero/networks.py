@@ -579,9 +579,11 @@ class MuZeroNetwork:
         return logits
 
     def _apply_support_scaling(self, x):
+        # As in the paper, we apply a scaling to the input to the value and reward
         return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
 
     def _invert_support_scaling(self, x):
+        # As in the paper, we invert the scaling applied to the input to the value and reward
         return torch.sign(x) * (
             ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
             ** 2
@@ -589,6 +591,8 @@ class MuZeroNetwork:
         )
 
     def _get_initial_reward_logits(self, state: Tensor):
+        """Returns zero reward logits for the initial state."""
+
         initial_reward = torch.zeros(
             (state.shape[0], 1),
             requires_grad=True,

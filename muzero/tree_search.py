@@ -55,6 +55,7 @@ def pick_child(context: MuZeroContext, node: Node, min_max_stats: MinMaxStats):
 
     max_ucb_score, action, _ = max(ucb_scores)
 
+    # If two actions have the same score, we break the tie randomly.
     action = numpy.random.choice(
         [action for ucb_score, action, _ in ucb_scores if ucb_score == max_ucb_score]
     )

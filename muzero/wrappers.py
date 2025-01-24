@@ -2,7 +2,9 @@ import gymnasium as gym
 
 
 class RewardCutWrapper(gym.Wrapper):
-    def __init__(self, env, max_reward):
+    """A wrapper that cuts the reward to a maximum value."""
+
+    def __init__(self, env: gym.Env, max_reward: int):
         super(RewardCutWrapper, self).__init__(env)
         self.max_reward = max_reward
 

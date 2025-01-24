@@ -26,6 +26,8 @@ class MinMaxStats(object):
 
 
 class MuZeroContext(object):
+    """MuZero Hyperparameters."""
+
     def __init__(
         self,
         n_actions: int,
@@ -50,6 +52,7 @@ class MuZeroContext(object):
         ### Self-Play
         self.n_actions = n_actions
         self.num_actors = num_actors
+        self.act_device = act_device
 
         self.max_moves = max_moves
         self.num_simulations = num_simulations
@@ -69,6 +72,10 @@ class MuZeroContext(object):
         # AlphaZero in board games.
         self.known_bounds = known_bounds
 
+        # Environment
+        self._env_factory = env_factory
+        self._envs = [env_factory(i) for i in range(num_actors)]
+
         ### Training
         self.training_steps = int(1000e3)
         self.checkpoint_interval = int(250)
@@ -76,6 +83,8 @@ class MuZeroContext(object):
         self.batch_size = batch_size
         self.num_unroll_steps = 5
         self.td_steps = td_steps
+        self.value_loss_weight = value_loss_weight
+        self.train_device = train_device
 
         self.weight_decay = 1e-4
         self.momentum = 0.9
@@ -85,16 +94,12 @@ class MuZeroContext(object):
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = lr_decay_steps
 
-        # Representation function parameters
+        ### Checkpoint path.
+        self.checkpoint_path = checkpoint_path
+
+        ### Representation function parameters
         self.n_states_representation = n_states_representation
         self.n_actions_representation = n_actions_representation
-
-        self.checkpoint_path = checkpoint_path
-        self._env_factory = env_factory
-        self._envs = [env_factory(i) for i in range(num_actors)]
-        self.train_device = train_device
-        self.act_device = act_device
-        self.value_loss_weight = value_loss_weight
 
     def new_game(self, actor_id: int):
         return Game(
@@ -104,7 +109,21 @@ class MuZeroContext(object):
             self.act_device,
         )
 
-    def visit_softmax_temperature(self, num_moves, training_steps):
+    def visit_softmax_temperature(
+        self,
+        num_moves: int,
+        training_steps: int,
+    ):
+        """
+        Determines the level of exploration in the search tree.
+
+        Args:
+            num_moves: The number of moves that have been made in the game.
+            training_steps: The number of training steps that have been executed.
+        """
+
+        # In the paper, they use a step function to change the exploration.
+        # Number of moves was not used in the end.
         if training_steps < 500e3:
             return 1.0
         elif training_steps < 750e3:

@@ -5,6 +5,13 @@ import torch
 
 
 class Node(object):
+    """
+    A node in the search tree.
+
+    Each node keeps track of its own value Q, prior probability P, and its visit count.
+    The children are stored in a dictionary where keys are action and values are nodes.
+    """
+
     def __init__(self, prior: float):
         self.visit_count = 0
         self.to_play = -1
@@ -24,6 +31,10 @@ class Node(object):
 
 
 class Game(object):
+    """
+    A class that holds the state of the game and the results of the search.
+    """
+
     def __init__(
         self,
         env: Env,
@@ -59,13 +70,25 @@ class Game(object):
         n_states_representation: int,
         n_actions_representation: int,
     ) -> torch.Tensor:
+        """
+        Prepare the state representation for the network.
+
+        The representation consists of the last n_states_representation states and the last n_actions_representation actions.
+
+        Args:
+            index: The index of the state to represent.
+            n_states_representation: The number of states to include in the representation.
+            n_actions_representation: The number of actions to include in the representation.
+
+        Returns:
+            The state representation as a tensor.
+        """
+
         stacked_states = self.states[
             max(index + 1 - n_states_representation, 0) : index + 1
         ]
 
-        if not stacked_states:
-            print(len(self.states), index, n_states_representation)
-
+        # Pad with zeros if there are not enough states.
         if len(stacked_states) < n_states_representation:
             stacked_states = [torch.zeros_like(stacked_states[0])] * (
                 n_states_representation - len(stacked_states)
@@ -76,6 +99,8 @@ class Game(object):
         picked_actions = self.actions[
             max(index + 1 - n_actions_representation, 0) : index + 1
         ]
+
+        # Pad with zeros if there are not enough actions.
         if len(picked_actions) < n_actions_representation:
             picked_actions = [0] * (
                 n_actions_representation - len(picked_actions)
@@ -163,13 +188,20 @@ class Game(object):
         self.root_values.append(root.value())
 
     def _state_to_tensor(self, state: np.ndarray) -> torch.Tensor:
-        state_tensor = torch.from_numpy(
-            state
-        ).float()  # Convert to tensor and float type
-        state_tensor = state_tensor.permute(2, 0, 1)  # Reshape from HWC to CHW
-        return state_tensor.unsqueeze(0).to(self.device)  # Add batch dimension
+        # Convert to tensor and float type
+        state_tensor = torch.from_numpy(state).float()
+        # Reshape from HWC to CHW
+        state_tensor = state_tensor.permute(2, 0, 1)
+        # Add batch dimension
+        state_tensor = state_tensor.unsqueeze(0)
+        return state_tensor.to(self.device)
 
     def clone_for_reanalyze(self):
+        """
+        We create a clone to avoid changing the game stored in the replay buffer.
+        It includes the same states, actions, rewards, and done flags, but it does not include the search statistics.
+        """
+
         game = Game(
             env=None,
             action_space_size=self.action_space_size,

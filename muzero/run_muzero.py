@@ -14,10 +14,11 @@ from muzero.context import MuZeroContext
 from muzero.networks import MuZeroNetwork
 from muzero.replay import ReplayBuffer
 from muzero.threads import Actor, GamesCollector, Reanalyzer, SharedContext, Trainer
-from muzero.wrappers import RewardCutWrapper
 
 CHECKPOINT_PATH = "checkpoints/muzero"
 CHECKPOINT_TIMESTAMP = int(time.time())
+REANALYSE = True
+
 games_queue = Queue()
 stop_event = threading.Event()
 train_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,18 +33,15 @@ torch.set_printoptions(profile="full")
 
 
 def env_factory(actor_id: int):
-    return RewardCutWrapper(
-        gymnasium.wrappers.AtariPreprocessing(
-            gymnasium.wrappers.RecordVideo(
-                gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array", frameskip=4),
-                f"{CHECKPOINT_PATH}/recordings_{CHECKPOINT_TIMESTAMP}/{actor_id}",
-                lambda x: True,
-            ),
-            screen_size=96,
-            grayscale_obs=False,
-            frame_skip=1,
+    return gymnasium.wrappers.AtariPreprocessing(
+        gymnasium.wrappers.RecordVideo(
+            gymnasium.make("ALE/MsPacman-v5", render_mode="rgb_array", frameskip=4),
+            f"{CHECKPOINT_PATH}/recordings_{CHECKPOINT_TIMESTAMP}/{actor_id}",
+            lambda _: True,
         ),
-        max_reward=100,
+        screen_size=96,
+        grayscale_obs=False,
+        frame_skip=1,
     )
 
 
@@ -52,13 +50,12 @@ context = MuZeroContext(
     max_moves=27000,
     discount=0.997,
     dirichlet_alpha=0.25,
-    # num_simulations=50,
+    # num_simulations=50, # in the paper
     num_simulations=10,
-    # batch_size=1024,
+    # batch_size=1024, # in the paper
     batch_size=256,
-    td_steps=10,
-    # td_steps=5,
-    num_actors=2,
+    td_steps=5 if REANALYSE else 10,
+    num_actors=1 if REANALYSE else 2,
     lr_init=0.05,
     lr_decay_steps=350e3,
     env_factory=env_factory,
@@ -118,13 +115,14 @@ games_collector = GamesCollector(
 )
 games_collector.start()
 
-# reanalyzer = Reanalyzer(
-#     context=context,
-#     shared_context=shared_context,
-#     stop_event=stop_event,
-#     replay_buffer=replay_buffer,
-# )
-# reanalyzer.start()
+if REANALYSE:
+    reanalyzer = Reanalyzer(
+        context=context,
+        shared_context=shared_context,
+        stop_event=stop_event,
+        replay_buffer=replay_buffer,
+    )
+    reanalyzer.start()
 
 
 def signal_handler(signum, frame):

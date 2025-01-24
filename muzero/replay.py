@@ -13,11 +13,15 @@ import shutil
 
 
 class StateIndex(NamedTuple):
+    """Index of a single state in the replay buffer."""
+
     game_index: int
     state_index: int
 
 
 class BatchedExperiences(NamedTuple):
+    """A batch of experiences sampled from the replay buffer."""
+
     indexes: List[StateIndex]
     states: Tensor
     gradient_scales: Tensor
@@ -43,6 +47,12 @@ class ReplayBuffer:
         ----------
         capacity: int
             The maximum number of experiences that the replay buffer can store.
+        unroll_steps: int
+            The number of steps to unroll the MCTS search.
+        td_steps: int
+            The number of steps to bootstrap the value target.
+        path: str
+            The path to the file where the replay buffer is stored.
         """
         self._capacity = capacity
         self._unroll_steps = unroll_steps
@@ -51,6 +61,9 @@ class ReplayBuffer:
         self._buffer: List[Game] = [None] * capacity
         self._priorities = np.zeros(capacity)
         self._reanalyze_priorities = np.zeros(capacity)
+
+        # Lock to ensure that the buffer is thread-safe across
+        # multiple actors, reanalyzer and the trainer.
         self._lock = Lock()
         self.total_games = 0
         self.total_samples = 0
@@ -156,7 +169,8 @@ class ReplayBuffer:
 
     def _sample_game_position(self, game: Game):
         return np.random.choice(
-            len(game.states) - 1, p=game.priorities / np.sum(game.priorities)
+            len(game.states) - 1,
+            p=game.priorities / np.sum(game.priorities),
         )
 
     def to_dict(self):
@@ -168,9 +182,6 @@ class ReplayBuffer:
             "reanalyze_priorities": self._reanalyze_priorities,
         }
 
-    def _get_old_path(self):
-        return f"{self._path}.old"
-
     def save_to_disk(self):
         if os.path.exists(self._path):
             old_path = self._get_old_path()
@@ -181,6 +192,9 @@ class ReplayBuffer:
 
         if os.path.exists(self._get_old_path()):
             os.remove(old_path)
+
+    def _get_old_path(self):
+        return f"{self._path}.old"
 
     def load_from_disk(self):
         if not os.path.exists(self._path):
@@ -248,6 +262,8 @@ class ReplayBuffer:
             self._reanalyze_priorities[: min(self.total_games, self._capacity)] += 1
 
     def _get_absolute_game_index(self, game_index: int) -> int:
+        """Absolute game index is used because the buffer is cyclic and the game may be replaced."""
+
         absolute_game_index = (
             self.total_games // self._capacity * self._capacity + game_index
         )
