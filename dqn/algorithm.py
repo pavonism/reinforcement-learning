@@ -232,7 +232,6 @@ class DQNAlgorithm:
             return q_values.argmax().item()
 
     def _save(self):
-        tqdm.write("Saving checkpoint...")
         os.makedirs(self._path, exist_ok=True)
         self._replay_buffer.save_to_directory(self._path)
 
@@ -248,6 +247,7 @@ class DQNAlgorithm:
 
         model_path = f"{self._path}/model.pth"
         torch.save(self._action_value.state_dict(), model_path)
+        tqdm.write("Checkpoint saved.")
 
     def _load(self):
         tqdm.write("Loading checkpoint...")

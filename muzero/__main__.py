@@ -17,7 +17,7 @@ from muzero.threads import Actor, GamesCollector, Reanalyzer, SharedContext, Tra
 
 CHECKPOINT_PATH = "checkpoints/muzero"
 CHECKPOINT_TIMESTAMP = int(time.time())
-REANALYSE = True
+REANALYSE = False
 
 games_queue = Queue()
 stop_event = threading.Event()

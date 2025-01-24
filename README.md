@@ -14,15 +14,26 @@ Additionally, you have to install Torch for cuda by yourself:
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
+## Run Training
+
+To run the training, execute the desired algorithm using the command below from the root project directory:
+
+```console
+python <algorithm_name>
+```
+
+Replace <algorithm_name> with the specific algorithm you want to run, such as ppo, muzero, or dqn.
+
 ## 🌳 Project structure
 
 ```bash
 │   .gitignore # Files to ignore
 │   README.md # This file
 │   pyproject.toml # Project configuration file
+├───checkpoints # Checkpoints for each run
 ├───scripts # Notebooks
 ├───dqn # DQN implementation
 ├───ppo # PPO implementation
 ├───muzero # MuZero implementation
-└───src # Dommy folder for pyproject.toml
+└───src # Dummy folder for pyproject.toml
 ```

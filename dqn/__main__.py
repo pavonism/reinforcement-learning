@@ -8,7 +8,7 @@ from dqn.algorithm import DQNAlgorithm
 from dqn.context import Context
 from dqn.networks import DQN
 
-CHECKPOINT_PATH = "checkpoints/dqn/after_refactor"
+CHECKPOINT_PATH = "checkpoints/dqn"
 CHECKPOINT_TIMESTAMP = int(time.time())
 
 gymnasium.register_envs(ale_py)
