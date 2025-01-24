@@ -1,7 +1,10 @@
 import numpy as np
 import torch
 
+
 class RolloutBuffer:
+    """A buffer to store the rollout data."""
+
     def __init__(self):
         self.states = []
         self.actions = []
@@ -20,22 +23,29 @@ class RolloutBuffer:
     def compute_rewards_to_go(self, gamma=0.99):
         rewards = []
         discounted_reward = 0
-        for reward, is_terminal in zip(reversed(self.rewards), reversed(self.is_terminals)):
+
+        for reward, is_terminal in zip(
+            reversed(self.rewards), reversed(self.is_terminals)
+        ):
             if is_terminal:
                 discounted_reward = 0
             discounted_reward = reward + gamma * discounted_reward
             rewards.insert(0, discounted_reward)
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        return self.normalize_rewards(rewards)
 
-    
-    def compute_gae(self, values, gamma=0.99, gae_lambda=0.95):
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        return self._normalize_rewards(rewards)
+
+    def compute_gae(self, values: np.ndarray, gamma=0.99, gae_lambda=0.95):
         advantages = []
         gae = 0
         next_value = 0
 
         for step in reversed(range(len(self.rewards))):
-            delta = self.rewards[step] + gamma * next_value * (1 - self.is_terminals[step]) - values[step]
+            delta = (
+                self.rewards[step]
+                + gamma * next_value * (1 - self.is_terminals[step])
+                - values[step]
+            )
             gae = delta + gamma * gae_lambda * gae * (1 - self.is_terminals[step])
             advantages.insert(0, gae)
             next_value = values[step]
@@ -45,8 +55,7 @@ class RolloutBuffer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages
 
-    def normalize_rewards(self, rewards):
+    def _normalize_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
         rewards_mean = rewards.mean()
         rewards_std = rewards.std() + 1e-8
         return (rewards - rewards_mean) / rewards_std
-
